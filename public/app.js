@@ -88,7 +88,7 @@ document.fonts.ready.then(async () => {
   // Ensure Roboto Serif is loaded for headline rendering
   try {
     await document.fonts.load("600 49px 'Roboto Serif'");
-  } catch(e) { /* font may already be loaded */ }
+  } catch (e) { /* font may already be loaded */ }
   await waitForImage(defaultMain);
   await ensureImageFocalPoint(defaultMain);
   renderPoster();
@@ -144,7 +144,7 @@ downloadButton.addEventListener("click", () => {
   // Render WITHOUT UI overlays for clean export
   state.isDownloading = true;
   renderPoster();
-  
+
   // Use toBlob instead of toDataURL to prevent browser limits on large base64 strings which can downgrade quality
   canvas.toBlob((blob) => {
     if (!blob) {
@@ -156,7 +156,7 @@ downloadButton.addEventListener("click", () => {
     link.href = url;
     link.download = `${slugify(state.headline || "pix-post")}.png`;
     link.click();
-    
+
     // Cleanup URL immediately to save memory
     setTimeout(() => URL.revokeObjectURL(url), 100);
 
@@ -383,21 +383,21 @@ async function runScrape() {
 async function fetchStockImages(headline) {
   try {
     // 1. Extract proper search keywords from the headline instead of passing a long sentence
-    const STOP = new Set(["THE","A","AN","AND","OR","BUT","FOR","WITH","FROM","THAT","THIS",
-      "WILL","WOULD","SHOULD","COULD","SAYS","SAID","AFTER","BEFORE","ABOUT",
-      "HAVE","HAS","HAD","WAS","WERE","ARE","IS","BEEN","INTO","OVER","UNDER",
-      "THEIR","THEY","THEM","THERE","THEN","MORE","MOST","VERY","JUST","ALSO",
-      "NEW","NEWS","LIVE","WHAT","WHEN","WHERE","WHO","HOW","WHY","WHICH", "AMID", "IN", "ON"]);
-    
+    const STOP = new Set(["THE", "A", "AN", "AND", "OR", "BUT", "FOR", "WITH", "FROM", "THAT", "THIS",
+      "WILL", "WOULD", "SHOULD", "COULD", "SAYS", "SAID", "AFTER", "BEFORE", "ABOUT",
+      "HAVE", "HAS", "HAD", "WAS", "WERE", "ARE", "IS", "BEEN", "INTO", "OVER", "UNDER",
+      "THEIR", "THEY", "THEM", "THERE", "THEN", "MORE", "MOST", "VERY", "JUST", "ALSO",
+      "NEW", "NEWS", "LIVE", "WHAT", "WHEN", "WHERE", "WHO", "HOW", "WHY", "WHICH", "AMID", "IN", "ON"]);
+
     // Extract alphanumeric words, uppercase
     const words = headline.toUpperCase().replace(/[^A-Z0-9\s]/g, "").split(/\s+/).filter(Boolean);
     const keywords = words.filter(w => !STOP.has(w) && w.length > 2).slice(0, 5); // Take top 5 meaningful words
-    
+
     // Fallback to exactly 40 chars of the headline if keyword extraction fails
     const searchQuery = keywords.length > 0 ? keywords.join(" ") : headline.slice(0, 40);
 
     let images = [];
-    
+
     // 2. Try Web / News Images first (Bing -> Google -> DDG)
     try {
       const gRes = await fetch(`/api/google-images?query=${encodeURIComponent(searchQuery)}`);
@@ -500,14 +500,14 @@ function drawHero() {
   const gradientStart = 800;
   const gradientHeight = canvas.height - gradientStart;  // 900px
   const grad = ctx.createLinearGradient(0, gradientStart, 0, canvas.height);
-  grad.addColorStop(0,    `rgba(0,0,0,0)`);
+  grad.addColorStop(0, `rgba(0,0,0,0)`);
   grad.addColorStop(0.12, `rgba(0,0,0,${(0.10 * opa).toFixed(2)})`);
   grad.addColorStop(0.22, `rgba(0,0,0,${(0.30 * opa).toFixed(2)})`);
   grad.addColorStop(0.30, `rgba(0,0,0,${(0.55 * opa).toFixed(2)})`);
   grad.addColorStop(0.38, `rgba(0,0,0,${(0.80 * opa).toFixed(2)})`);
   grad.addColorStop(0.44, `rgba(0,0,0,${(0.95 * opa).toFixed(2)})`);
   grad.addColorStop(0.50, `rgba(0,0,0,${(1.00 * opa).toFixed(2)})`);
-  grad.addColorStop(1,    `rgba(0,0,0,${(1.00 * opa).toFixed(2)})`);
+  grad.addColorStop(1, `rgba(0,0,0,${(1.00 * opa).toFixed(2)})`);
   ctx.fillStyle = grad;
   ctx.fillRect(0, gradientStart, canvas.width, gradientHeight);
 
@@ -567,7 +567,7 @@ function drawFixedLogos() {
   if (state.logoImage) {
     const rawW = state.logoImage.naturalWidth || state.logoImage.width || 1;
     const rawH = state.logoImage.naturalHeight || state.logoImage.height || 1;
-    
+
     // Scale so that maximum dimension fits in 100px perfectly
     const scale = 100 / Math.max(rawW, rawH);
     const drawW = rawW * scale;
@@ -584,7 +584,7 @@ function drawFixedLogos() {
 function drawLogoAt(img, x, y, w, h) {
   ctx.save();
   // Light shadow effect (soft white glow) to make the logo pop against dark backgrounds
-  ctx.shadowColor = "rgba(255, 255, 255, 0.5)"; 
+  ctx.shadowColor = "rgba(255, 255, 255, 0.5)";
   ctx.shadowBlur = 18;
   ctx.drawImage(img, x, y, w, h);
   ctx.shadowBlur = 0;
@@ -640,7 +640,11 @@ function drawHeadline() {
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
 
-    for (const rawWord of rawWords) {
+    let segmentStartX = null;
+    let segmentWidth = 0;
+    let segments = [];
+
+    rawWords.forEach((rawWord, i) => {
       const isOpening = rawWord.includes('[');
       const isClosing = rawWord.includes(']');
       const cleanWord = rawWord.replace(/[\[\]]/g, '');
@@ -652,35 +656,44 @@ function drawHeadline() {
       const totalAdvance = wordWidth + spaceWidth;
 
       if (currentlyHighlighted && cleanWord.length > 0) {
-        ctx.fillStyle = state.accent;
-        
-        const isFirstInLine = (rawWord === rawWords[0]);
-        const isLastInLine = (rawWord === rawWords[rawWords.length - 1]);
-
-        let widthToFill = totalAdvance;
-        if (isClosing || isLastInLine) {
-          widthToFill = wordWidth; // Stop highlight at the end of the word cleanly, then add padding
+        if (segmentStartX === null) {
+          segmentStartX = bgCursor;
         }
 
-        let drawX = bgCursor;
-        let padW = 0;
-        const PADDING = 8;
-
-        if (isOpening || isFirstInLine) {
-           drawX -= PADDING;
-           padW += PADDING;
-        }
-        if (isClosing || isLastInLine) {
-           padW += PADDING;
+        let advanceForHighlight = totalAdvance;
+        if (isClosing || i === rawWords.length - 1) {
+          advanceForHighlight = wordWidth; // Stop highlight at the end of the word cleanly
         }
 
-        // Draw the background block tight to the text bounds
-        ctx.fillRect(drawX, y - 2, widthToFill + padW, layout.lineHeight + 4);
+        segmentWidth += advanceForHighlight;
+      }
+
+      if ((isClosing || i === rawWords.length - 1) && segmentStartX !== null) {
+        segments.push({ x: segmentStartX, w: segmentWidth });
+        segmentStartX = null;
+        segmentWidth = 0;
       }
 
       if (isClosing) currentlyHighlighted = false;
       bgCursor += totalAdvance;
-    }
+    });
+
+    ctx.fillStyle = state.accent;
+    const PADDING = 8;
+
+    segments.forEach(seg => {
+      const drawX = seg.x - PADDING;
+      const widthToFill = seg.w + PADDING * 2;
+
+      const drawY = y + 4;
+      const drawH = layout.lineHeight - 6; // Creates a vertical gap between lines
+      const radius = 8; // Soft rounded corners
+
+      ctx.beginPath();
+      // Use standard roundRect
+      ctx.roundRect(drawX, drawY, widthToFill, drawH, radius);
+      ctx.fill();
+    });
   });
 
   // reset for pass 2
@@ -722,19 +735,19 @@ function drawEngagementBar() {
   const pillH = Math.round(48.9 * scale);  // ~115
   const shareW = Math.round(48.9 * scale); // ~115
   const gap = Math.round(8 * scale);       // ~19
-  
-  const barY = 1700 - Math.round(14 * scale) - Math.round(46 * scale) - Math.round(6 * scale) - pillH; 
-  
+
+  const barY = 1700 - Math.round(14 * scale) - Math.round(46 * scale) - Math.round(6 * scale) - pillH;
+
   // Center align the entire group (pill + gap + share circle)
   const totalW = pillW + gap + shareW;
-  const barX = (canvas.width - totalW) / 2; 
+  const barX = (canvas.width - totalW) / 2;
 
   // Dark Pill Background
   ctx.fillStyle = "rgba(13, 13, 13, 0.8)";
   ctx.shadowColor = "rgba(0, 0, 0, 0.1)";
   ctx.shadowBlur = 12;
   ctx.shadowOffsetY = 8;
-  
+
   ctx.beginPath();
   ctx.roundRect(barX, barY, pillW, pillH, pillH / 2);
   ctx.fill();
@@ -750,7 +763,7 @@ function drawEngagementBar() {
   ctx.lineWidth = 1.5;
   const sectionW = pillW / 3;
   const cy = barY + pillH / 2;
-  
+
   for (let i = 1; i <= 2; i++) {
     ctx.beginPath();
     ctx.moveTo(barX + sectionW * i, cy - 22);
@@ -764,22 +777,22 @@ function drawEngagementBar() {
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
 
-  const iconScale = 40; 
+  const iconScale = 40;
 
   const drawItem = (index, iconPath, text, isFill) => {
     const cx = barX + sectionW * index + sectionW / 2;
     const textWidth = ctx.measureText(text).width;
     const itemGap = 12;
     const totalW = iconScale + itemGap + textWidth;
-    
+
     const startX = cx - totalW / 2 + iconScale / 2;
-    
+
     // Draw icon
     drawIconPath(startX, cy, iconScale, iconPath, isFill);
-    
+
     // Draw text
-    ctx.fillStyle = "#ffffff"; 
-    ctx.fillText(text, startX + iconScale / 2 + itemGap, cy + 2); 
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, startX + iconScale / 2 + itemGap, cy + 2);
   };
 
   const LIKE_SOLID = "M2 21h2V9H2v12zm4-9v10a1 1 0 001 1h9.07a2 2 0 001.93-1.49L21.83 11A2 2 0 0019.9 8.5H14V4a2 2 0 00-2-2h-.09a1.65 1.65 0 00-1.56 1.09L7.44 12H6z";
@@ -792,12 +805,12 @@ function drawEngagementBar() {
 
   // --- Share Circle ---
   const shareX = barX + pillW + gap;
-  
+
   ctx.fillStyle = "rgba(13, 13, 13, 0.8)";
   ctx.shadowColor = "rgba(0, 0, 0, 0.1)";
   ctx.shadowBlur = 12;
   ctx.shadowOffsetY = 8;
-  
+
   ctx.beginPath();
   ctx.arc(shareX + shareW / 2, cy, shareW / 2, 0, Math.PI * 2);
   ctx.fill();
@@ -808,7 +821,7 @@ function drawEngagementBar() {
   ctx.stroke();
 
   const SHARE_SOLID = "M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z";
-  drawIconPath(shareX + shareW / 2 - 2, cy - 2, 40, SHARE_SOLID, true); 
+  drawIconPath(shareX + shareW / 2 - 2, cy - 2, 40, SHARE_SOLID, true);
 
   ctx.restore();
 }
@@ -831,7 +844,7 @@ function drawNavBar() {
   const barH = Math.round(46 * scale);  // 108
   const barY = 1700 - Math.round(6 * scale) - barH; // 1578
   const barX = (920 - barW) / 2; // ~14
-  
+
   // Background
   ctx.fillStyle = "rgba(13, 13, 13, 0.8)";
   ctx.shadowColor = "rgba(0, 0, 0, 0.2)";
@@ -855,11 +868,11 @@ function drawNavBar() {
   const NAV_BOLT = "M11 21h-1l1-7H7.5a.5.5 0 01-.4-.8l3.9-5.2V3h1l-1 7h3.5a.5.5 0 01.4.8L11 16v5z";
 
   const icons = [NAV_HOME, NAV_VIDEO, NAV_DOC_OUTLINE, NAV_AUDIO, NAV_BOLT];
-  
+
   const padding = 64;
   const startX = barX + padding;
   const W = barW - padding * 2;
-  
+
   icons.forEach((path, i) => {
     const cx = startX + i * (W / 4);
     const isAccent = i === 4;
@@ -1020,7 +1033,7 @@ async function ensureImageFocalPoint(image) {
           y: box.y + box.height / 2
         };
       }
-    } catch {}
+    } catch { }
   }
 
   image.__focalPoint = focalPoint;
