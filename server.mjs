@@ -1,0 +1,850 @@
+import http from "node:http";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { extname, join, normalize } from "node:path";
+
+const root = join(process.cwd(), "public");
+const port = Number(process.env.PORT || 3000);
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36";
+
+function readSecrets() {
+  // Try reading .env as JSON from project dir or parent dir
+  const candidates = [
+    join(process.cwd(), ".env"),
+    join(process.cwd(), "..", ".env")
+  ];
+  for (const file of candidates) {
+    try {
+      if (existsSync(file)) {
+        const raw = readFileSync(file, "utf-8").trim();
+        // Support JSON format: { "pexelsApiKey": "..." }
+        if (raw.startsWith("{")) return JSON.parse(raw);
+        // Support KEY=VALUE format
+        const obj = {};
+        for (const line of raw.split("\n")) {
+          const match = line.match(/^\s*([A-Za-z_]+)\s*[:=]\s*"?([^"]*)"?\s*$/);
+          if (match) obj[match[1]] = match[2];
+        }
+        return obj;
+      }
+    } catch { /* ignore */ }
+  }
+  return {};
+}
+
+const secrets = readSecrets();
+const pexelsApiKey = process.env.PEXELS_API_KEY || secrets.pexelsApiKey || secrets.PEXELS_API_KEY || "";
+if (pexelsApiKey) {
+  console.log(`✓ Pexels API key loaded (${pexelsApiKey.slice(0, 6)}…)`);
+} else {
+  console.warn("⚠ No Pexels API key found. Stock images will not work.");
+  console.warn("  Checked: .env in project dir and parent dir, or PEXELS_API_KEY env var.");
+}
+
+const STOPWORDS = new Set([
+  "THE", "A", "AN", "AND", "OR", "BUT", "FOR", "WITH", "FROM", "THAT", "THIS", "WILL", "WOULD", "SHOULD", "COULD",
+  "SAYS", "SAID", "AFTER", "BEFORE", "ABOUT", "UNDER", "OVER", "INTO", "ONTO", "WITHIN", "WITHOUT", "THROUGH",
+  "THEIR", "THEY", "THEM", "THERE", "THEN", "HAVE", "HAS", "HAD", "WAS", "WERE", "ARE", "IS", "BEEN", "BEING",
+  "MORE", "MOST", "VERY", "JUST", "ONLY", "ALSO", "NEWS", "LIVE", "BBC", "NEW", "SOME", "SUCH", "YOUR", "OUR",
+  "AGAINST", "DURING", "WHILE", "WHERE", "WHEN", "WHAT", "WHICH", "WHO", "WHOM", "WHY", "HOW"
+]);
+
+
+const types = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".json": "application/json; charset=utf-8"
+};
+
+const server = http.createServer(async (req, res) => {
+  if (req.method === "POST" && req.url === "/api/scrape") {
+    await handleScrape(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/scrape-article") {
+    await handleScrapeArticle(req, res);
+    return;
+  }
+
+  if (req.method === "GET" && req.url?.startsWith("/api/image?")) {
+    await handleImageProxy(req, res);
+    return;
+  }
+
+  if (req.method === "GET" && req.url?.startsWith("/api/stock-images?")) {
+    await handleStockImages(req, res);
+    return;
+  }
+
+  if (req.method === "GET" && req.url?.startsWith("/api/google-images?")) {
+    await handleGoogleImages(req, res);
+    return;
+  }
+
+  const urlPath = req.url === "/" ? "/index.html" : req.url;
+  const safePath = normalize(urlPath).replace(/^([.][.][/\\])+/, "");
+  const filePath = join(root, safePath);
+
+  if (!filePath.startsWith(root) || !existsSync(filePath) || statSync(filePath).isDirectory()) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Not found");
+    return;
+  }
+
+  res.writeHead(200, { "Content-Type": types[extname(filePath).toLowerCase()] || "application/octet-stream" });
+  createReadStream(filePath).pipe(res);
+});
+
+server.listen(port, () => {
+  console.log(`Pix Post Builder running at http://localhost:${port}`);
+});
+
+/* ── Web Image Search (multi-source, high quality) ── */
+
+// Strip CDN resize parameters to get original full-resolution images
+function upgradeImageUrl(imageUrl) {
+  try {
+    const u = new URL(imageUrl);
+
+    // Cloudinary: remove transformation path segments
+    if (u.hostname.includes("cloudinary.com") || u.hostname.includes("res.cloudinary.com")) {
+      u.pathname = u.pathname.replace(/\/c_\w+,[^/]+/g, "").replace(/\/w_\d+[^/]*/g, "").replace(/\/h_\d+[^/]*/g, "");
+      return u.toString();
+    }
+
+    // imgix: remove resize params, set high quality
+    if (u.hostname.includes("imgix.net")) {
+      u.searchParams.delete("w"); u.searchParams.delete("h");
+      u.searchParams.delete("fit"); u.searchParams.delete("crop");
+      u.searchParams.set("q", "100");
+      return u.toString();
+    }
+
+    // WordPress/Jetpack: strip resize params
+    if (u.searchParams.has("resize") || u.searchParams.has("w") || u.searchParams.has("fit")) {
+      u.searchParams.delete("resize"); u.searchParams.delete("w"); u.searchParams.delete("h");
+      u.searchParams.delete("fit"); u.searchParams.delete("crop");
+      return u.toString();
+    }
+
+    // Generic: remove common resize params
+    for (const key of ["width", "height", "w", "h", "quality", "q", "resize", "size", "maxwidth", "maxheight"]) {
+      u.searchParams.delete(key);
+    }
+
+    // YouTube: upgrade to maxresdefault
+    if (u.hostname.includes("ytimg.com") && u.pathname.includes("hqdefault")) {
+      return imageUrl.replace("hqdefault", "maxresdefault");
+    }
+
+    return u.toString();
+  } catch {
+    return imageUrl;
+  }
+}
+
+// Skip low-quality URLs (favicons, icons, tiny thumbnails)
+function isLikelyHighQuality(url) {
+  const lower = url.toLowerCase();
+  if (lower.includes("favicon")) return false;
+  if (lower.includes("/icon")) return false;
+  if (lower.match(/\b(16|24|32|48|64|72|96)x\1\b/)) return false;
+  if (lower.includes("thumbnail") && !lower.includes("maxresdefault")) return false;
+  if (lower.includes("logo") && !lower.includes("article")) return false;
+  return true;
+}
+
+async function handleGoogleImages(req, res) {
+  try {
+    const requestUrl = new URL(req.url, `http://localhost:${port}`);
+    const query = requestUrl.searchParams.get("query")?.trim();
+    if (!query) {
+      sendJson(res, 400, { error: "A search query is required." });
+      return;
+    }
+
+    let images = [];
+
+    // Source 1: Bing (cloud-friendly)
+    images = await tryBingImages(query, 8);
+
+    // Source 2: Google (fallback — works locally, may be blocked on cloud)
+    if (!images.length) {
+      images = await tryGoogleImages(query, 8);
+    }
+
+    // Source 3: DuckDuckGo (last resort)
+    if (!images.length) {
+      images = await tryDuckDuckGoImages(query, 8);
+    }
+
+    sendJson(res, 200, { images, source: images.length ? "web" : "none" });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Image search failed." });
+  }
+}
+
+async function tryBingImages(query, max) {
+  try {
+    // filterui:imagesize-wallpaper = extra large images only
+    const bingUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&qft=+filterui:imagesize-wallpaper&form=IRFLTR&first=1`;
+    const response = await fetch(bingUrl, {
+      headers: {
+        "user-agent": USER_AGENT,
+        "accept": "text/html,application/xhtml+xml",
+        "accept-language": "en-US,en;q=0.9"
+      }
+    });
+    if (!response.ok) return [];
+    const html = await response.text();
+
+    const results = [];
+    const seen = new Set();
+    const matches = html.matchAll(/"murl"\s*:\s*"(https?:[^"]+)"/gi);
+    for (const m of matches) {
+      if (results.length >= max) break;
+      let url = m[1].replace(/\\u002f/gi, "/").replace(/\\u0026/gi, "&");
+      if (url.includes("bing.com") || url.includes("bing.net") || url.includes("microsoft.com")) continue;
+      if (!isLikelyHighQuality(url)) continue;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      const upgraded = upgradeImageUrl(url);
+      results.push({
+        id: results.length,
+        alt: "Related Image",
+        preview: `/api/image?url=${encodeURIComponent(upgraded)}`,
+        image: upgraded,
+        imageProxy: `/api/image?url=${encodeURIComponent(upgraded)}`,
+        source: "bing"
+      });
+    }
+
+    // If wallpaper size returned nothing, try large
+    if (!results.length) {
+      const fallbackUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&qft=+filterui:imagesize-large&form=IRFLTR&first=1`;
+      const fbRes = await fetch(fallbackUrl, {
+        headers: { "user-agent": USER_AGENT, "accept": "text/html,application/xhtml+xml", "accept-language": "en-US,en;q=0.9" }
+      });
+      if (fbRes.ok) {
+        const fbHtml = await fbRes.text();
+        const fbMatches = fbHtml.matchAll(/"murl"\s*:\s*"(https?:[^"]+)"/gi);
+        for (const m of fbMatches) {
+          if (results.length >= max) break;
+          let url = m[1].replace(/\\u002f/gi, "/").replace(/\\u0026/gi, "&");
+          if (url.includes("bing.com") || url.includes("bing.net") || url.includes("microsoft.com")) continue;
+          if (!isLikelyHighQuality(url)) continue;
+          if (seen.has(url)) continue;
+          seen.add(url);
+          const upgraded = upgradeImageUrl(url);
+          results.push({
+            id: results.length,
+            alt: "Related Image",
+            preview: `/api/image?url=${encodeURIComponent(upgraded)}`,
+            image: upgraded,
+            imageProxy: `/api/image?url=${encodeURIComponent(upgraded)}`,
+            source: "bing"
+          });
+        }
+      }
+    }
+
+    return results;
+  } catch { return []; }
+}
+
+async function tryGoogleImages(query, max) {
+  try {
+    // tbs=isz:lt,islt:2mp = images larger than 2 megapixels
+    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch&tbs=isz:lt,islt:2mp`;
+    const response = await fetch(googleUrl, {
+      headers: {
+        "user-agent": USER_AGENT,
+        "accept": "text/html,application/xhtml+xml",
+        "accept-language": "en-US,en;q=0.9"
+      }
+    });
+    if (!response.ok) return [];
+    const html = await response.text();
+
+    const results = [];
+    const seen = new Set();
+    const scriptMatches = html.matchAll(/\["(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)",[0-9]+,[0-9]+\]/gi);
+    for (const m of scriptMatches) {
+      if (results.length >= max) break;
+      let url = m[1].replace(/\\u003d/g, "=").replace(/\\u0026/g, "&").replace(/\\\/\//g, "//");
+      if (url.includes("gstatic.com") || url.includes("google.com") || url.includes("googleapis.com")) continue;
+      if (url.includes("x-raw-image")) continue;
+      if (!isLikelyHighQuality(url)) continue;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      const upgraded = upgradeImageUrl(url);
+      results.push({
+        id: results.length,
+        alt: "Google Image",
+        preview: `/api/image?url=${encodeURIComponent(upgraded)}`,
+        image: upgraded,
+        imageProxy: `/api/image?url=${encodeURIComponent(upgraded)}`,
+        source: "google"
+      });
+    }
+    return results;
+  } catch { return []; }
+}
+
+async function tryDuckDuckGoImages(query, max) {
+  try {
+    const tokenRes = await fetch(`https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`, {
+      headers: { "user-agent": USER_AGENT }
+    });
+    if (!tokenRes.ok) return [];
+    const tokenHtml = await tokenRes.text();
+    const vqd = tokenHtml.match(/vqd=([\d-]+)/)?.[1];
+    if (!vqd) return [];
+
+    const ddgUrl = `https://duckduckgo.com/i.js?l=us-en&o=json&q=${encodeURIComponent(query)}&vqd=${vqd}&f=size:Large&p=1`;
+    const ddgRes = await fetch(ddgUrl, {
+      headers: { "user-agent": USER_AGENT, "accept": "application/json" }
+    });
+    if (!ddgRes.ok) return [];
+    const data = await ddgRes.json();
+
+    return (data.results || []).filter(r => isLikelyHighQuality(r.image || "")).slice(0, max).map((r, i) => {
+      const upgraded = upgradeImageUrl(r.image);
+      return {
+        id: i,
+        alt: r.title || "DuckDuckGo Image",
+        preview: `/api/image?url=${encodeURIComponent(r.thumbnail || upgraded)}`,
+        image: upgraded,
+        imageProxy: `/api/image?url=${encodeURIComponent(upgraded)}`,
+        source: "duckduckgo"
+      };
+    });
+  } catch { return []; }
+}
+
+async function handleScrape(req, res) {
+  try {
+    const body = await readJson(req);
+    const targetUrl = body?.url;
+
+    if (!targetUrl) {
+      sendJson(res, 400, { error: "A URL is required." });
+      return;
+    }
+
+    const parsedUrl = new URL(targetUrl);
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      sendJson(res, 400, { error: "Only http and https URLs are supported." });
+      return;
+    }
+
+    const response = await fetch(parsedUrl, { headers: { "user-agent": USER_AGENT } });
+    if (!response.ok) {
+      sendJson(res, 502, { error: `Source returned ${response.status}.` });
+      return;
+    }
+
+    const html = await response.text();
+    const candidates = extractItems(html, parsedUrl);
+    const items = await enrichItems(candidates);
+    sendJson(res, 200, { items });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Scrape failed." });
+  }
+}
+
+async function handleScrapeArticle(req, res) {
+  try {
+    const body = await readJson(req);
+    const targetUrl = body?.url;
+
+    if (!targetUrl) {
+      sendJson(res, 400, { error: "A URL is required." });
+      return;
+    }
+
+    const parsedUrl = new URL(targetUrl);
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      sendJson(res, 400, { error: "Only http and https URLs are supported." });
+      return;
+    }
+
+    const response = await fetch(parsedUrl, { headers: { "user-agent": USER_AGENT } });
+    if (!response.ok) {
+      sendJson(res, 502, { error: `Source returned ${response.status}.` });
+      return;
+    }
+
+    const html = await response.text();
+
+    // Extract title: og:title > twitter:title > <title> tag
+    let title = extractMetaContent(html, ["og:title", "twitter:title"]);
+    if (!title) {
+      const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      title = titleMatch ? cleanupText(stripTags(titleMatch[1])) : "";
+    }
+    // Strip any leftover HTML tags and clean up
+    title = cleanupText(stripTags(title));
+    // Clean up common suffixes like " - BBC News", " | Times of India"
+    title = title.replace(/\s*[-|–—]\s*[^-|–—]{2,30}$/i, "").trim();
+
+    // Extract image: try secure_url first, then og:image, twitter:image
+    let image = extractMetaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]);
+    if (image) {
+      image = resolveMaybeRelative(image, targetUrl);
+      image = upgradeImageToHighestQuality(image);
+    }
+
+    if (!title) {
+      sendJson(res, 422, { error: "Could not extract a title from this page." });
+      return;
+    }
+
+    sendJson(res, 200, {
+      title: cleanupText(title),
+      image: image || null,
+      imageProxy: image ? `/api/image?url=${encodeURIComponent(image)}` : null,
+      sourceUrl: targetUrl
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Article scrape failed." });
+  }
+}
+
+async function handleStockImages(req, res) {
+  try {
+    if (!pexelsApiKey) {
+      sendJson(res, 500, { error: "Pexels API key is missing." });
+      return;
+    }
+
+    const requestUrl = new URL(req.url, `http://localhost:${port}`);
+    const query = requestUrl.searchParams.get("query")?.trim();
+    if (!query) {
+      sendJson(res, 400, { error: "A search query is required." });
+      return;
+    }
+
+    const pexelsUrl = new URL("https://api.pexels.com/v1/search");
+    pexelsUrl.searchParams.set("query", query);
+    pexelsUrl.searchParams.set("per_page", "6");
+    pexelsUrl.searchParams.set("orientation", "portrait");
+
+    const response = await fetch(pexelsUrl, {
+      headers: {
+        Authorization: pexelsApiKey,
+        "user-agent": USER_AGENT
+      }
+    });
+
+    if (!response.ok) {
+      sendJson(res, 502, { error: `Pexels returned ${response.status}.` });
+      return;
+    }
+
+    const payload = await response.json();
+    const images = (payload.photos || []).map((photo) => ({
+      id: photo.id,
+      alt: photo.alt || query,
+      photographer: photo.photographer || "Pexels",
+      pageUrl: photo.url,
+      preview: photo.src?.medium || photo.src?.large || photo.src?.original,
+      image: photo.src?.large2x || photo.src?.large || photo.src?.original,
+      imageProxy: photo.src?.large2x || photo.src?.large || photo.src?.original
+        ? `/api/image?url=${encodeURIComponent(photo.src?.large2x || photo.src?.large || photo.src?.original)}`
+        : null
+    })).filter((item) => item.preview && item.imageProxy);
+
+    sendJson(res, 200, { images });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Image search failed." });
+  }
+}
+
+async function handleImageProxy(req, res) {
+  try {
+    const requestUrl = new URL(req.url, `http://localhost:${port}`);
+    const target = requestUrl.searchParams.get("url");
+    if (!target) {
+      sendJson(res, 400, { error: "Image URL is required." });
+      return;
+    }
+
+    const parsed = new URL(target);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      sendJson(res, 400, { error: "Only http and https image URLs are supported." });
+      return;
+    }
+
+    const response = await fetch(parsed, { headers: { "user-agent": USER_AGENT } });
+    if (!response.ok) {
+      sendJson(res, 502, { error: `Image source returned ${response.status}.` });
+      return;
+    }
+
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*"
+    });
+    res.end(buffer);
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Image proxy failed." });
+  }
+}
+
+function extractItems(html, baseUrl) {
+  const matches = [...html.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+  const items = [];
+  const seen = new Set();
+
+  for (const match of matches) {
+    const href = match[1]?.trim();
+    const rawInner = match[2] ?? "";
+    const title = cleanupText(stripTags(rawInner));
+    if (!href || !looksLikeHeadline(title)) {
+      continue;
+    }
+
+    let absoluteUrl;
+    try {
+      absoluteUrl = new URL(href, baseUrl).toString();
+    } catch {
+      continue;
+    }
+
+    if (!looksLikeArticleUrl(absoluteUrl, baseUrl)) {
+      continue;
+    }
+
+    const normalizedKey = `${normalizeText(title)}|${normalizeUrl(absoluteUrl)}`;
+    if (seen.has(normalizedKey)) {
+      continue;
+    }
+
+    seen.add(normalizedKey);
+    items.push({
+      title: trimTitle(title),
+      url: absoluteUrl,
+      image: extractImageUrl(rawInner, baseUrl)
+    });
+
+    if (items.length >= 16) {
+      break;
+    }
+  }
+
+  return items;
+}
+
+async function enrichItems(items) {
+  const enriched = [];
+
+  for (const item of items) {
+    const next = { ...item };
+    try {
+      const response = await fetch(item.url, { headers: { "user-agent": USER_AGENT } });
+      if (response.ok) {
+        const html = await response.text();
+        const metaTitle = extractMetaContent(html, ["og:title", "twitter:title"]);
+        const metaImage = extractMetaContent(html, ["og:image", "twitter:image", "twitter:image:src"]);
+        if (metaTitle && looksLikeHeadline(metaTitle)) {
+          next.title = trimTitle(cleanupText(metaTitle));
+        }
+        if (metaImage) {
+          next.image = resolveMaybeRelative(metaImage, item.url);
+        }
+      }
+    } catch {
+    }
+
+    next.posterText = next.posterText || buildPosterText(next.title, "", "");
+    next.keywords = next.keywords?.length ? next.keywords : extractKeywords(next.title, next.posterText);
+    next.imageProxy = next.image ? `/api/image?url=${encodeURIComponent(next.image)}` : null;
+    enriched.push(next);
+  }
+
+  return enriched.filter((item, index, array) => array.findIndex((candidate) => normalizeUrl(candidate.url) === normalizeUrl(item.url)) === index);
+}
+
+function extractMetaContent(html, names) {
+  for (const name of names) {
+    const propertyRegex = new RegExp(`<meta[^>]+(?:property|name)=["']${escapeForRegex(name)}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i");
+    const contentFirstRegex = new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${escapeForRegex(name)}["'][^>]*>`, "i");
+    const match = html.match(propertyRegex) || html.match(contentFirstRegex);
+    if (match?.[1]) {
+      return decodeHtmlEntities(match[1]);
+    }
+  }
+  return null;
+}
+
+function extractImageUrl(htmlChunk, baseUrl) {
+  const src = findAttributeValue(htmlChunk, ["src", "data-src", "data-lazy-src", "data-original"]);
+  const srcset = findAttributeValue(htmlChunk, ["srcset", "data-srcset"]);
+  const candidate = src || firstSrcFromSet(srcset);
+  return candidate ? resolveMaybeRelative(candidate, baseUrl) : null;
+}
+
+function findAttributeValue(htmlChunk, names) {
+  for (const name of names) {
+    const regex = new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`, "i");
+    const match = htmlChunk.match(regex);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function resolveMaybeRelative(value, baseUrl) {
+  try {
+    return new URL(value.trim(), baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function firstSrcFromSet(value) {
+  if (!value) {
+    return null;
+  }
+  return value.split(",")[0]?.trim().split(/\s+/)[0] || null;
+}
+
+function stripTags(value) {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ");
+}
+
+function cleanupText(value) {
+  return decodeHtmlEntities(value).replace(/\s+/g, " ").trim();
+}
+
+function decodeHtmlEntities(value) {
+  return value
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&hellip;/gi, "...");
+}
+
+function upgradeImageToHighestQuality(imageUrl) {
+  try {
+    const u = new URL(imageUrl);
+    const host = u.hostname;
+
+    // --- Cloudinary ---
+    if (host.includes("cloudinary.com")) {
+      // Replace upload transformations with just w_auto,q_auto:best
+      u.pathname = u.pathname.replace(/\/upload\/[^/]+\//, "/upload/q_auto:best,f_auto/");
+      return u.toString();
+    }
+
+    // --- imgix ---
+    if (host.includes("imgix.net") || u.searchParams.has("ixid")) {
+      u.searchParams.delete("w");
+      u.searchParams.delete("h");
+      u.searchParams.delete("fit");
+      u.searchParams.delete("crop");
+      u.searchParams.delete("q");
+      u.searchParams.delete("auto");
+      u.searchParams.set("q", "100");
+      u.searchParams.set("auto", "format,compress");
+      return u.toString();
+    }
+
+    // --- WordPress / Jetpack resize (e.g. ?resize=800,450 or ?w=800) ---
+    if (u.searchParams.has("resize") || (u.searchParams.has("w") && !host.includes("twitter"))) {
+      u.searchParams.delete("resize");
+      u.searchParams.delete("w");
+      u.searchParams.delete("h");
+      u.searchParams.delete("fit");
+      u.searchParams.delete("strip");
+      u.searchParams.delete("quality");
+      return u.toString();
+    }
+
+    // --- Times of India / HT Media (thumb/ in path) ---
+    const toi = u.pathname.match(/^(.*?)\/thumb\/(\d+)x(\d+)(\/.*)?$/);
+    if (toi) {
+      u.pathname = toi[1] + (toi[4] || "");
+      return u.toString();
+    }
+
+    // --- BBC / Akamai image service (/ichef/) ---
+    if (host.includes("bbci.co.uk") || u.pathname.includes("/ichef/")) {
+      u.pathname = u.pathname.replace(/\/\d+\//, "/1280/");
+      return u.toString();
+    }
+
+    // --- Generic: strip common resize query params ---
+    ["width", "height", "w", "h", "size", "quality", "q", "maxwidth", "maxheight", "scale"].forEach(p => {
+      u.searchParams.delete(p);
+    });
+
+    return u.toString();
+  } catch {
+    return imageUrl;
+  }
+}
+
+function looksLikeHeadline(value) {
+  if (!value) {
+    return false;
+  }
+  const text = cleanupText(value);
+  const words = text.split(/\s+/).filter(Boolean);
+  if (text.length < 30 || text.length > 180) {
+    return false;
+  }
+  if (words.length < 5 || words.length > 28) {
+    return false;
+  }
+  if (/^(sign in|home|live|menu|search|open source|bbc news|british broadcasting corporation)$/i.test(text)) {
+    return false;
+  }
+  return /[a-zA-Z]/.test(text);
+}
+
+function looksLikeArticleUrl(candidate, baseUrl) {
+  const url = new URL(candidate);
+  const base = new URL(baseUrl);
+  if (!["http:", "https:"].includes(url.protocol)) {
+    return false;
+  }
+  const path = url.pathname.toLowerCase();
+  if (url.origin === base.origin && (path === "/" || path === "")) {
+    return false;
+  }
+  if (/\/(signin|account|weather|sport\/scores-and-fixtures|newsround)$/.test(path)) {
+    return false;
+  }
+  return path.split("/").filter(Boolean).length >= 1;
+}
+
+function trimTitle(value) {
+  return value.length > 110 ? `${value.slice(0, 107).trimEnd()}...` : value;
+}
+
+function escapeForRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeText(value) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function normalizeUrl(value) {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return value;
+  }
+}
+
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 1_000_000) {
+        reject(new Error("Request body too large."));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        reject(new Error("Invalid JSON body."));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function sendJson(res, status, payload) {
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify(payload));
+}
+
+function extractArticleText(html) {
+  const articleMatch = html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i);
+  const scope = articleMatch?.[1] || html;
+  const paragraphs = [...scope.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+    .map((match) => cleanupText(stripTags(match[1] || "")))
+    .filter((text) => text.length >= 50 && text.length <= 360)
+    .filter((text) => !/^(sign up|read more|copyright|follow live|watch:)/i.test(text));
+  return paragraphs.slice(0, 4).join(" ");
+}
+
+function buildPosterText(title, metaDescription, articleText) {
+  const source = cleanupText(metaDescription || articleText || title);
+  const sentences = source.split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);
+  let summary = "";
+  for (const sentence of sentences) {
+    const candidate = `${summary} ${sentence}`.trim();
+    if (candidate.length > 120) {
+      break;
+    }
+    summary = candidate;
+    if (summary.length >= 72) {
+      break;
+    }
+  }
+  const output = summary || source;
+  return output.length > 120 ? `${output.slice(0, 117).trimEnd()}...` : output;
+}
+
+function extractKeywords(title, posterText) {
+  const found = [];
+  const phraseMatches = cleanupText(title).match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}|[A-Z]{2,})\b/g) || [];
+  for (const match of phraseMatches) {
+    const upper = match.toUpperCase();
+    if (!STOPWORDS.has(upper) && !found.includes(upper)) {
+      found.push(upper);
+    }
+    if (found.length >= 3) {
+      return found;
+    }
+  }
+
+  const frequency = new Map();
+  for (const word of cleanupText(`${title} ${posterText}`).toUpperCase().match(/[A-Z]{3,}/g) || []) {
+    if (STOPWORDS.has(word) || word.length < 4) {
+      continue;
+    }
+    frequency.set(word, (frequency.get(word) || 0) + 1);
+  }
+
+  for (const word of [...frequency.entries()].sort((a, b) => b[1] - a[1]).map(([word]) => word)) {
+    if (!found.includes(word)) {
+      found.push(word);
+    }
+    if (found.length >= 4) {
+      break;
+    }
+  }
+
+  return found.slice(0, 4);
+}
+
+

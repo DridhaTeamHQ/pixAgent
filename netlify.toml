@@ -1,0 +1,24 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+# Redirect API calls to serverless functions
+[[redirects]]
+  from = "/api/scrape-article"
+  to = "/.netlify/functions/scrape-article"
+  status = 200
+
+[[redirects]]
+  from = "/api/image"
+  to = "/.netlify/functions/image-proxy"
+  status = 200
+
+[[redirects]]
+  from = "/api/stock-images"
+  to = "/.netlify/functions/stock-images"
+  status = 200
+
+[[redirects]]
+  from = "/api/google-images"
+  to = "/.netlify/functions/google-images"
+  status = 200
