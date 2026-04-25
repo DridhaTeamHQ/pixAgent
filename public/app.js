@@ -10,6 +10,7 @@ const scrapeStatus = document.getElementById("scrape-status");
 const downloadButton = document.getElementById("download-btn");
 
 const editPanel = document.getElementById("edit-panel");
+const imagePanel = document.getElementById("image-panel");
 const headlineEdit = document.getElementById("headline-edit");
 const imgOffsetX = document.getElementById("img-offset-x");
 const imgOffsetY = document.getElementById("img-offset-y");
@@ -125,6 +126,7 @@ writeApplyBtn.addEventListener("click", () => {
   state.headline = text;
   headlineEdit.value = text;
   editPanel.hidden = false;
+  imagePanel.hidden = false;
   renderPoster();
 });
 
@@ -243,6 +245,7 @@ bgImageUpload.addEventListener("change", (e) => {
       imgOffsetX.value = 0;
       imgOffsetY.value = 0;
       editPanel.hidden = false;
+      imagePanel.hidden = false;
       renderPoster();
       setStatus("Custom image loaded!", "success");
     };
@@ -353,6 +356,7 @@ async function runScrape() {
     // Populate edit panel
     headlineEdit.value = payload.title || "";
     editPanel.hidden = false;
+    imagePanel.hidden = false;
 
     // Load scraped image
     if (payload.imageProxy) {

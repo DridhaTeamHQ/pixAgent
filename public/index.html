@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pix Post Builder</title>
+  <title>Pix — Post Builder</title>
   <meta name="description" content="Paste a news article URL, scrape the headline and image, then edit and download a beautiful 9:16 poster." />
   <link rel="stylesheet" href="./styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -11,14 +11,23 @@
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800;900&family=Roboto+Serif:opsz,wght@8..144,400;8..144,600;8..144,700;8..144,800&display=swap" rel="stylesheet">
 </head>
 <body>
+
+  <!-- Sticky top navbar -->
+  <nav class="app-nav">
+    <div class="nav-logo">
+      <span class="nav-logo-mark">Px</span>
+      Pix Post Builder
+    </div>
+    <span class="nav-badge">Beta</span>
+  </nav>
+
   <main class="app-shell" id="app">
-    <!-- LEFT: Controls -->
+
+    <!-- ── COL 1: Text & Style ── -->
     <section class="glass-panel controls-panel">
-      <div class="panel-copy">
-        <span class="eyebrow">Pix Post Builder</span>
-        <h1>Create your<br>poster.</h1>
-        <p class="desc">Scrape a news article or write your own headline — then fine-tune and download.</p>
-      </div>
+
+      <h1>Create your<br>poster.</h1>
+      <p class="desc">Scrape an article or write your own headline.</p>
 
       <!-- Mode Tabs -->
       <div class="mode-tabs" id="mode-tabs">
@@ -30,13 +39,9 @@
       <form class="form-group" id="scrape-form">
         <label class="field">
           <span class="field-label">Article URL</span>
-          <input id="scrape-url" type="url" placeholder="https://example.com/news/article" required />
+          <input id="scrape-url" type="url" placeholder="https://example.com/article" required />
         </label>
-        <div>
-          <button type="submit" class="btn-primary" id="scrape-btn">
-             ⚡ Scrape & Build
-          </button>
-        </div>
+        <button type="submit" class="btn-primary" id="scrape-btn">⚡ Scrape &amp; Build</button>
         <p id="scrape-status" class="status-text">Ready — paste a URL and hit scrape.</p>
       </form>
 
@@ -44,79 +49,73 @@
       <div class="form-group" id="write-form" hidden>
         <label class="field">
           <span class="field-label">Headline</span>
-          <textarea id="write-headline" rows="3" placeholder="Type your headline here..."></textarea>
-          <small class="helper-text">
-            💡 Tip: Wrap words in <b>[brackets]</b> to highlight them (e.g. <i>Modi tables [Finance Bill 2026] in Parliament</i>).
-          </small>
+          <textarea id="write-headline" rows="3" placeholder="Type your headline..."></textarea>
+          <small class="helper-text">Wrap words in [brackets] to highlight them.</small>
         </label>
-        <div>
-          <button type="button" class="btn-primary" id="write-apply-btn">
-            ✨ Build Poster
-          </button>
-        </div>
+        <button type="button" class="btn-primary" id="write-apply-btn">✨ Build Poster</button>
       </div>
 
-      <!-- Edit Controls (shown after scrape) -->
+      <!-- ── Edit Controls ── -->
       <div id="edit-panel" class="edit-panel" hidden>
-        <hr class="divider" />
-        <span class="eyebrow">Edit Poster</span>
 
-        <!-- Headline Edit -->
-        <label class="field" style="margin-top: 16px;">
-          <span class="field-label">Headline</span>
+        <div class="section" style="margin-top:22px;">
+          <span class="section-label">Headline</span>
           <textarea id="headline-edit" placeholder="Edit your headline..."></textarea>
-          <!-- Highlight Instruction -->
-          <small class="helper-text">
-            💡 Tip: Wrap words in <b>[brackets]</b> to highlight them (e.g. <i>Modi tables [Finance Bill 2026] in Parliament</i>).
-          </small>
-        </label>
-
-        <!-- Tag Type -->
-        <h3 class="control-title">Tag Badge</h3>
-        <div class="preset-grid" id="tag-presets">
-          <button type="button" class="preset-btn active" data-tag="none" title="No Tag">None</button>
-          <button type="button" class="preset-btn" data-tag="trending" title="Trending with icon">🔥 Trending</button>
-          <button type="button" class="preset-btn" data-tag="trending-text" title="Trending text only">Trending</button>
-          <button type="button" class="preset-btn" data-tag="breaking" title="Breaking with icon">⚡ Breaking</button>
-          <button type="button" class="preset-btn" data-tag="breaking-text" title="Breaking text only">Breaking</button>
+          <small class="helper-text">Wrap words in [brackets] to highlight them.</small>
         </div>
 
-        <hr class="divider" />
-
-        <!-- Typography & Color -->
-        <span class="eyebrow">Theme Settings</span>
-        
-        <h3 class="control-title" style="margin-top:16px;">Typography</h3>
-        <label class="slider-container">
-          <span class="slider-label">Font Size</span>
-          <input type="range" id="font-size" min="32" max="90" value="0" />
-        </label>
-
-        <h3 class="control-title">Accent Color</h3>
-        <label class="color-picker-wrap">
-          <div class="color-circle" style="border-color: #7900d9;">
-            <input type="color" id="accent-color" value="#7900d9" />
+        <div class="section">
+          <span class="section-label">Tag Badge</span>
+          <div class="preset-grid" id="tag-presets">
+            <button type="button" class="preset-btn active" data-tag="none"          title="No Tag">None</button>
+            <button type="button" class="preset-btn"        data-tag="trending"      title="Trending with icon">🔥 Trending</button>
+            <button type="button" class="preset-btn"        data-tag="trending-text" title="Trending text only">Trending</button>
+            <button type="button" class="preset-btn"        data-tag="breaking"      title="Breaking with icon">⚡ Breaking</button>
+            <button type="button" class="preset-btn"        data-tag="breaking-text" title="Breaking text only">Breaking</button>
           </div>
-          <span class="color-hex" id="accent-hex">#7900D9</span>
-        </label>
+        </div>
 
-        <hr class="divider" />
+        <div class="section">
+          <span class="section-label">Font Size</span>
+          <label class="slider-container" style="margin-bottom:0;">
+            <span class="slider-label">Size</span>
+            <input type="range" id="font-size" min="32" max="90" value="0" />
+          </label>
+        </div>
 
-        <!-- Image Controls -->
-        <span class="eyebrow">Background Map</span>
-        <h3 class="control-title" style="margin-top:16px;">Custom Upload</h3>
+        <div class="section">
+          <span class="section-label">Accent Color</span>
+          <label class="color-picker-wrap">
+            <div class="color-circle" style="border-color: #7900d9;">
+              <input type="color" id="accent-color" value="#7900d9" />
+            </div>
+            <span class="color-hex" id="accent-hex">#7900D9</span>
+          </label>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── COL 2: Background / Image ── -->
+    <section class="glass-panel image-panel" id="image-panel" hidden>
+
+      <h2 class="panel-title">Background</h2>
+
+      <div class="section" style="margin-top:0; padding-top:0; border-top:none;">
+        <span class="section-label">Custom Upload</span>
         <label class="upload-zone">
-          <span class="upload-text">Drag & drop or click to upload</span>
+          <span class="upload-text">Drag &amp; drop or click</span>
           <input type="file" id="bg-image-upload" accept="image/*" />
         </label>
+      </div>
 
-        <!-- Recommended Stock Images -->
-        <div id="stock-images-section" hidden>
-          <h3 class="control-title">Stock Backgrounds</h3>
-          <div id="stock-images-grid" class="stock-grid"></div>
-        </div>
+      <div id="stock-images-section" class="section" hidden>
+        <span class="section-label">Stock Backgrounds</span>
+        <div id="stock-images-grid" class="stock-grid"></div>
+      </div>
 
-        <h3 class="control-title" style="margin-top:24px;">Adjustments</h3>
+      <div class="section">
+        <span class="section-label">Adjustments</span>
         <label class="slider-container">
           <span class="slider-label">Zoom</span>
           <input type="range" id="img-zoom" min="10" max="300" value="100" />
@@ -129,25 +128,22 @@
           <span class="slider-label">Pan Y</span>
           <input type="range" id="img-offset-y" min="-500" max="500" value="0" />
         </label>
-        <label class="slider-container">
+        <label class="slider-container" style="margin-bottom:12px;">
           <span class="slider-label">Opacity</span>
           <input type="range" id="overlay-opacity" min="0" max="100" value="100" />
         </label>
-
-        <div style="margin-top: 16px;">
-          <button type="button" id="img-reset-btn" class="btn-secondary">Reset Image</button>
-        </div>
-
+        <button type="button" id="img-reset-btn" class="btn-secondary">↺ Reset Image</button>
       </div>
+
     </section>
 
-    <!-- RIGHT: Preview + Download -->
+    <!-- ── COL 3: Preview + Download ── -->
     <section class="glass-panel preview-panel">
       <div class="preview-header">
         <span class="preview-title">Live Preview</span>
         <span class="preview-pixels">920 × 1700</span>
       </div>
-      
+
       <div class="canvas-container">
         <canvas id="post-canvas" width="920" height="1700" aria-label="Generated Pix news post"></canvas>
       </div>
@@ -158,6 +154,7 @@
         </button>
       </div>
     </section>
+
   </main>
 
   <script src="./app.js"></script>
