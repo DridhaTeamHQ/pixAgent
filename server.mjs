@@ -1,6 +1,7 @@
 import http from "node:http";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
+import { TwitterApi } from "twitter-api-v2";
 
 const root = join(process.cwd(), "public");
 const port = Number(process.env.PORT || 3000);
@@ -38,6 +39,30 @@ if (pexelsApiKey) {
 } else {
   console.warn("⚠ No Pexels API key found. Stock images will not work.");
   console.warn("  Checked: .env in project dir and parent dir, or PEXELS_API_KEY env var.");
+}
+
+/* ── Twitter / X (OAuth 1.0a) ── */
+const twitterCfg = {
+  appKey:       process.env.TWITTER_API_KEY       || secrets.TWITTER_API_KEY,
+  appSecret:    process.env.TWITTER_API_SECRET    || secrets.TWITTER_API_SECRET,
+  accessToken:  process.env.TWITTER_ACCESS_TOKEN  || secrets.TWITTER_ACCESS_TOKEN,
+  accessSecret: process.env.TWITTER_ACCESS_SECRET || secrets.TWITTER_ACCESS_SECRET,
+};
+const twitterClient = (twitterCfg.appKey && twitterCfg.accessToken)
+  ? new TwitterApi(twitterCfg)
+  : null;
+if (twitterClient) {
+  console.log(`✓ Twitter API ready (key ${twitterCfg.appKey.slice(0, 6)}…)`);
+} else {
+  console.warn("⚠ Twitter keys missing — /api/twitter/post will return 503.");
+}
+
+/* ── OpenAI (for AI tweet captions) ── */
+const openaiApiKey = process.env.OPENAI_API_KEY || secrets.OPENAI_API_KEY || "";
+if (openaiApiKey) {
+  console.log(`✓ OpenAI API key loaded (${openaiApiKey.slice(0, 8)}…)`);
+} else {
+  console.warn("⚠ OPENAI_API_KEY missing — /api/generate-caption will return 503.");
 }
 
 const STOPWORDS = new Set([
@@ -86,7 +111,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const urlPath = req.url === "/" ? "/index.html" : req.url;
+  if (req.method === "POST" && req.url === "/api/twitter/post") {
+    await handleTwitterPost(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/generate-caption") {
+    await handleGenerateCaption(req, res);
+    return;
+  }
+
+  // Static file serving — URL-decode so paths with %20 (spaces) etc. resolve.
+  let urlPath = req.url === "/" ? "/index.html" : req.url;
+  // Drop any query string before disk lookup
+  const qIdx = urlPath.indexOf("?");
+  if (qIdx >= 0) urlPath = urlPath.slice(0, qIdx);
+  try { urlPath = decodeURIComponent(urlPath); } catch { /* leave as-is */ }
   const safePath = normalize(urlPath).replace(/^([.][.][/\\])+/, "");
   const filePath = join(root, safePath);
 
@@ -847,4 +887,166 @@ function extractKeywords(title, posterText) {
   return found.slice(0, 4);
 }
 
+/* ── Twitter / X — Post poster image with caption ── */
+async function handleTwitterPost(req, res) {
+  if (!twitterClient) {
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Twitter not configured. Set TWITTER_* keys in .env." }));
+    return;
+  }
+
+  try {
+    const caption = decodeURIComponent(req.headers["x-caption"] || "").trim();
+    if (!caption) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing X-Caption header." }));
+      return;
+    }
+    if (caption.length > 280) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: `Caption is ${caption.length} chars; max is 280.` }));
+      return;
+    }
+
+    // Read raw PNG body into a buffer (10 MB safety cap)
+    const MAX_BYTES = 10 * 1024 * 1024;
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > MAX_BYTES) {
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Image exceeds 10 MB." }));
+        return;
+      }
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+    if (buffer.length < 100) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Empty or invalid image body." }));
+      return;
+    }
+
+    console.log(`→ Twitter post: ${buffer.length} bytes, caption "${caption.slice(0, 40)}…"`);
+
+    // 1) Upload media (v1.1 endpoint, OAuth 1.0a)
+    const mediaId = await twitterClient.v1.uploadMedia(buffer, { mimeType: "image/png" });
+
+    // 2) Create tweet (v2) referencing the media
+    const tweet = await twitterClient.v2.tweet({
+      text: caption,
+      media: { media_ids: [mediaId] },
+    });
+
+    const tweetId = tweet?.data?.id;
+    const tweetUrl = tweetId ? `https://x.com/i/status/${tweetId}` : null;
+    console.log(`✓ Tweet posted: ${tweetUrl}`);
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, tweetUrl, id: tweetId }));
+  } catch (err) {
+    const code = err?.code || err?.data?.status || err?.status || 500;
+    const msg  = err?.data?.detail || err?.data?.errors?.[0]?.message || err?.message || "Twitter post failed.";
+    console.error("✗ Twitter post error:", code, msg);
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: msg, code }));
+  }
+}
+
+/* ── OpenAI — generate AI tweet caption + hashtags from a headline ── */
+async function handleGenerateCaption(req, res) {
+  if (!openaiApiKey) {
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "OPENAI_API_KEY not set on server." }));
+    return;
+  }
+
+  try {
+    // Read JSON body
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const raw = Buffer.concat(chunks).toString("utf-8");
+    let body = {};
+    try { body = JSON.parse(raw || "{}"); } catch { /* ignore */ }
+
+    const headline = (body.headline || "").trim();
+    if (!headline) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing 'headline' in body." }));
+      return;
+    }
+
+    const systemPrompt = [
+      "You are a senior social-media editor at a news outlet. You write tweets that accompany a news image poster — the image already shows the headline, so the tweet adds VALUE on top.",
+      "",
+      "Goal: make people stop scrolling and engage.",
+      "",
+      "RULES (follow strictly):",
+      "1. NEVER repeat the headline verbatim. Rewrite it as a hook: a sharp angle, a question, a striking fact, or a one-line takeaway.",
+      "2. Write 1–2 short sentences. Punchy. Active voice. No filler words ('In a major development', 'It is reported that', etc.).",
+      "3. Add 2–4 hashtags at the end, each highly relevant — mix one broad (e.g. #IndianPolitics) with one specific (e.g. #TamilNadu, #DMK). No #BreakingNews unless it actually is. Hashtags must be CamelCase, no spaces, no special chars.",
+      "4. Total length ≤ 270 characters INCLUDING hashtags. Count carefully.",
+      "5. Tone: neutral and professional for politics/conflict/tragedy. Conversational and curious for tech/business/culture. Light-hearted (still classy) for entertainment/sports.",
+      "6. No emojis. No clickbait phrasing ('You won't believe…'). No moralizing. No editorializing on contested issues — stay factual.",
+      "7. Output ONLY the final tweet text. No quotes, no labels, no preamble, no explanation.",
+      "",
+      "EXAMPLES of the style we want:",
+      "",
+      "Headline: \"Modi tables Finance Bill 2026 in Parliament amid opposition uproar\"",
+      "Tweet: Finance Bill 2026 hits the floor — and the opposition isn't letting it pass quietly. Key clauses on capital gains and digital tax are already drawing fire. #FinanceBill2026 #Parliament #IndianPolitics",
+      "",
+      "Headline: \"Apple unveils Vision Pro 2 with 50% lighter design at WWDC\"",
+      "Tweet: Apple's second swing at spatial computing is half the weight — and apparently twice the battery life. The price tag? Still TBD. #VisionPro2 #WWDC #Apple",
+      "",
+      "Headline: \"India crowned T20 World Cup champions after 11-year drought\"",
+      "Tweet: 11 years. One trophy back home. India's T20 wait is over. #T20WorldCup #TeamIndia #Cricket"
+    ].join("\n");
+
+    const t0 = Date.now();
+    const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openaiApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Headline:\n${headline}` },
+        ],
+        temperature: 0.8,
+        max_tokens: 140,
+      }),
+    });
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text().catch(() => "");
+      console.error(`✗ OpenAI ${aiRes.status}:`, errText.slice(0, 300));
+      res.writeHead(502, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: `OpenAI ${aiRes.status}`, detail: errText.slice(0, 200) }));
+      return;
+    }
+
+    const data = await aiRes.json();
+    let caption = data?.choices?.[0]?.message?.content?.trim() || "";
+
+    // Strip surrounding quotes if model added any
+    caption = caption.replace(/^["“”']+|["“”']+$/g, "").trim();
+
+    // Hard-trim to 280 just in case
+    if (caption.length > 280) caption = caption.slice(0, 277) + "…";
+
+    const ms = Date.now() - t0;
+    console.log(`✓ AI caption (${ms}ms, ${caption.length} chars): "${caption.slice(0, 60)}…"`);
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ caption }));
+  } catch (err) {
+    console.error("✗ generate-caption error:", err);
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: err.message || "Caption generation failed." }));
+  }
+}
 

@@ -588,6 +588,49 @@ canvas.dragging { cursor: grabbing; }
   box-shadow: 0 8px 22px rgba(34, 197, 94, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.13);
 }
 
+/* X / Twitter button */
+.btn-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 18px;
+  margin-bottom: 10px;
+  background: #000;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: var(--transition);
+  letter-spacing: -0.01em;
+}
+
+.btn-x:hover:not(:disabled) {
+  background: #1a1a1a;
+  border-color: rgba(255, 255, 255, 0.32);
+  transform: translateY(-1px);
+}
+
+.btn-x:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-x .x-glyph {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+#post-x-status a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+#post-x-status { margin-top: 8px; min-height: 1em; }
+
 /* ─── Utilities ──────────────────────────────────────────────── */
 .hidden { display: none !important; }
 

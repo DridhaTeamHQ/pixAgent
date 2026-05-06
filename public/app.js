@@ -46,6 +46,8 @@ const state = {
   logoY: 80,
   logoSize: 110,
   logoImage: null,
+  shortlyLogoImage: null,   // alt logo used when exporting for X
+  useShortlyLogo: false,    // toggled by Post to X handler
   secondLogoImage: null,
   tag: "none",       // "none" | "trending" | "breaking"
   tagImages: {},     // { trending: Image, breaking: Image }
@@ -68,6 +70,19 @@ pixLogo.onload = () => {
 };
 pixLogo.onerror = () => {
   console.warn("Logo failed to load — using text fallback.");
+};
+
+// Alt logo used only when exporting for X (Post to X button).
+// Uses shortly-s.svg — square 153×153 viewBox, same aspect ratio as Pix logo,
+// so the existing 100×100 slot scaler handles it identically.
+const shortlyLogo = new Image();
+shortlyLogo.src = "./assests/shortly-s.svg";
+shortlyLogo.onload = () => {
+  state.shortlyLogoImage = shortlyLogo;
+  console.log("✓ Shortly logo loaded — will be used for X exports");
+};
+shortlyLogo.onerror = () => {
+  console.error("✗ Shortly logo failed to load from", shortlyLogo.src, "— X exports will fall back to Pix logo.");
 };
 
 
@@ -140,6 +155,142 @@ writeHeadline.addEventListener("input", () => {
 scrapeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   await runScrape();
+});
+
+/* ── Post to X ── */
+const postXBtn    = document.getElementById("post-x-btn");
+const postXStatus = document.getElementById("post-x-status");
+
+function setPostStatus(msg, kind) {
+  postXStatus.className = "status-text" + (kind ? ` ${kind}` : "");
+  postXStatus.textContent = "";
+  if (msg) postXStatus.append(msg);
+}
+
+// Returns { caption, source: "ai" | "fallback", error? }
+async function fetchAiCaption(headline, timeoutMs = 12000) {
+  const fallback = headline.replace(/\[|\]/g, "").trim().slice(0, 280);
+  if (!headline.trim()) return { caption: fallback, source: "fallback", error: "empty headline" };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const resp = await fetch("/api/generate-caption", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ headline }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+
+    if (!resp.ok) {
+      let detail = `HTTP ${resp.status}`;
+      try { const j = await resp.json(); detail = j.error || detail; } catch {}
+      console.error("[AI caption] server returned:", detail);
+      return { caption: fallback, source: "fallback", error: detail };
+    }
+    const data = await resp.json();
+    const c = (data?.caption || "").trim();
+    if (!c) return { caption: fallback, source: "fallback", error: "empty AI response" };
+    console.log("[AI caption] success:", c);
+    return { caption: c, source: "ai" };
+  } catch (e) {
+    const msg = e?.name === "AbortError" ? "timeout" : (e?.message || String(e));
+    console.error("[AI caption] fetch failed:", msg);
+    return { caption: fallback, source: "fallback", error: msg };
+  }
+}
+
+postXBtn.addEventListener("click", () => {
+  const headline = (state.headline || "").trim();
+  if (!headline) {
+    setPostStatus("Build a poster first.", "error");
+    return;
+  }
+
+  postXBtn.disabled = true;
+  setPostStatus("Generating caption with AI…");
+
+  // Render clean export with the SHORTLY logo (only for the X-bound PNG)
+  state.isDownloading = true;
+  state.useShortlyLogo = true;
+  renderPoster();
+
+  // Two parallel async operations:
+  //   1. Render canvas → blob (fast, ~50ms)
+  //   2. Call OpenAI for an AI-written caption + hashtags (~1–2s)
+  const blobPromise = new Promise((resolve) => {
+    canvas.toBlob((b) => {
+      // Restore preview state: Pix logo + overlays back on
+      state.isDownloading = false;
+      state.useShortlyLogo = false;
+      renderPoster();
+      resolve(b);
+    }, "image/png");
+  });
+  const captionPromise = fetchAiCaption(headline);
+
+  (async () => {
+    // 1) COPY TO CLIPBOARD FIRST — must happen while this tab is focused.
+    //    ClipboardItem accepts a Promise<Blob>, which preserves the user
+    //    gesture chain better than awaiting the blob outright.
+    let clipboardOk = false;
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([
+          new ClipboardItem({ "image/png": blobPromise })
+        ]);
+        clipboardOk = true;
+      }
+    } catch (e) {
+      console.warn("Clipboard write failed:", e);
+    }
+
+    const blob = await blobPromise;
+    if (!blob) {
+      postXBtn.disabled = false;
+      setPostStatus("Couldn't render image.", "error");
+      return;
+    }
+
+    // 2) Trigger PNG download as a reliable fallback
+    const blobUrl = URL.createObjectURL(blob);
+    const dl = document.createElement("a");
+    dl.href = blobUrl;
+    dl.download = `${slugify(headline || "pix-post")}.png`;
+    dl.click();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+
+    // 3) Wait for AI caption (already in flight), then open X with it
+    setPostStatus("Opening X…");
+    const { caption, source, error } = await captionPromise;
+    const intentUrl = `https://x.com/intent/post?text=${encodeURIComponent(caption)}`;
+    const win = window.open(intentUrl, "_blank", "noopener,noreferrer");
+
+    // 4) Status — surface AI failures clearly so we can debug
+    postXStatus.textContent = "";
+    if (source === "ai") {
+      postXStatus.className = "status-text success";
+      postXStatus.append(
+        clipboardOk && win
+          ? "✓ AI caption written, image copied — Ctrl+V on the X tab."
+          : clipboardOk
+            ? "✓ AI caption written, image copied. "
+            : "✓ AI caption written, image downloaded — attach it on X. "
+      );
+    } else {
+      // AI failed — make it visible
+      postXStatus.className = "status-text error";
+      postXStatus.append(`⚠ AI caption failed (${error || "unknown"}) — used raw headline. `);
+    }
+    if (!win) {
+      const a = document.createElement("a");
+      a.href = intentUrl; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = "Open X →";
+      postXStatus.append(a);
+    }
+
+    postXBtn.disabled = false;
+  })();
 });
 
 downloadButton.addEventListener("click", () => {
@@ -567,22 +718,33 @@ function drawLogo(x, y, size) {
 }
 
 function drawFixedLogos() {
-  // Pix logo — Zeplin: bound to a 100x100 area at 760,100 but maintain aspect ratio to prevent squishing
-  if (state.logoImage) {
-    const rawW = state.logoImage.naturalWidth || state.logoImage.width || 1;
-    const rawH = state.logoImage.naturalHeight || state.logoImage.height || 1;
+  // Pick logo: when exporting for X, swap to Shortly (if loaded). Else use Pix.
+  const useAlt = state.useShortlyLogo && state.shortlyLogoImage;
+  const logo = useAlt ? state.shortlyLogoImage : state.logoImage;
+  if (!logo) return;
 
-    // Scale so that maximum dimension fits in 100px perfectly
-    const scale = 100 / Math.max(rawW, rawH);
-    const drawW = rawW * scale;
-    const drawH = rawH * scale;
+  // Shortly logo gets a slightly larger slot for visibility in X feeds.
+  // Pix logo keeps the original 100×100 slot so the live preview is unchanged.
+  const slotSize = useAlt ? 130 : 100;
 
-    // Center it physically in the 100x100 bounds at 760,100
-    const px = 760 + (100 - drawW) / 2;
-    const py = 100 + (100 - drawH) / 2;
+  // Both logos share the same visual center (the original Pix slot's center).
+  // Original Pix slot: top-left (760, 100), 100×100 → center (810, 150).
+  const centerX = 810;
+  const centerY = 150;
 
-    drawLogoAt(state.logoImage, px, py, drawW, drawH);
-  }
+  const rawW = logo.naturalWidth  || logo.width  || 1;
+  const rawH = logo.naturalHeight || logo.height || 1;
+
+  // Scale so the longest edge fills the slot (preserves aspect ratio)
+  const scale = slotSize / Math.max(rawW, rawH);
+  const drawW = rawW * scale;
+  const drawH = rawH * scale;
+
+  // Center inside the slot
+  const px = centerX - drawW / 2;
+  const py = centerY - drawH / 2;
+
+  drawLogoAt(logo, px, py, drawW, drawH);
 }
 
 function drawLogoAt(img, x, y, w, h) {
