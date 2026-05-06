@@ -767,9 +767,10 @@ function drawFixedLogos() {
   const logo = useAlt ? state.shortlyLogoImage : state.logoImage;
   if (!logo) return;
 
-  // Shortly logo gets a slightly larger slot for visibility in X feeds.
-  // Pix logo keeps the original 100×100 slot so the live preview is unchanged.
-  const slotSize = useAlt ? 130 : 100;
+  // The new Shortly PNG already includes its own circular gradient halo, so
+  // we draw it slightly smaller AND skip the white glow — both would compound
+  // into a clipped, blurry edge otherwise.
+  const slotSize = useAlt ? 96 : 100;
 
   // Both logos share the same visual center (the original Pix slot's center).
   // Original Pix slot: top-left (760, 100), 100×100 → center (810, 150).
@@ -788,14 +789,17 @@ function drawFixedLogos() {
   const px = centerX - drawW / 2;
   const py = centerY - drawH / 2;
 
-  drawLogoAt(logo, px, py, drawW, drawH);
+  drawLogoAt(logo, px, py, drawW, drawH, { glow: !useAlt });
 }
 
-function drawLogoAt(img, x, y, w, h) {
+function drawLogoAt(img, x, y, w, h, { glow = true } = {}) {
   ctx.save();
-  // Light shadow effect (soft white glow) to make the logo pop against dark backgrounds
-  ctx.shadowColor = "rgba(255, 255, 255, 0.5)";
-  ctx.shadowBlur = 18;
+  if (glow) {
+    // Soft white halo to make the Pix logo pop against dark backgrounds.
+    // Skipped for the Shortly logo, which carries its own gradient circle.
+    ctx.shadowColor = "rgba(255, 255, 255, 0.5)";
+    ctx.shadowBlur = 18;
+  }
   ctx.drawImage(img, x, y, w, h);
   ctx.shadowBlur = 0;
   ctx.restore();
