@@ -770,7 +770,7 @@ function drawFixedLogos() {
   // The new Shortly PNG already includes its own circular gradient halo, so
   // we draw it slightly smaller AND skip the white glow — both would compound
   // into a clipped, blurry edge otherwise.
-  const slotSize = useAlt ? 96 : 100;
+  const slotSize = useAlt ? 112 : 100;
 
   // Both logos share the same visual center (the original Pix slot's center).
   // Original Pix slot: top-left (760, 100), 100×100 → center (810, 150).
