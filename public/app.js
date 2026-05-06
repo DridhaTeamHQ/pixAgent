@@ -73,10 +73,10 @@ pixLogo.onerror = () => {
 };
 
 // Alt logo used only when exporting for X (Post to X button).
-// Uses shortly-s.svg — square 153×153 viewBox, same aspect ratio as Pix logo,
-// so the existing 100×100 slot scaler handles it identically.
+// PNG, square — same aspect ratio as Pix logo, so the existing slot scaler
+// handles it identically (130×130 slot for X exports, see drawFixedLogos).
 const shortlyLogo = new Image();
-shortlyLogo.src = "./assests/shortly-s.svg";
+shortlyLogo.src = "./assests/shortly-logo.png";
 shortlyLogo.onload = () => {
   state.shortlyLogoImage = shortlyLogo;
   console.log("✓ Shortly logo loaded — will be used for X exports");
