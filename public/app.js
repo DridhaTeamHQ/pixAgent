@@ -167,6 +167,57 @@ function setPostStatus(msg, kind) {
   if (msg) postXStatus.append(msg);
 }
 
+// Crop the canvas vertically to where the last non-black pixel lives, so the
+// exported PNG doesn't ship the trailing black gradient gap below the headline.
+// `paddingBelow`: extra px to keep below the last content row (breathing room).
+// `minHeight`:   never crop above this height (avoids ugly squares for short headlines).
+function exportCanvasCroppedToContent(srcCanvas, { paddingBelow = 32, minHeight = 1100 } = {}) {
+  const w = srcCanvas.width;
+  const h = srcCanvas.height;
+  const sctx = srcCanvas.getContext("2d");
+
+  // Pull the bottom 60% of the canvas in ONE getImageData call (fast).
+  // 60% covers the gradient + headline area; we won't have content above that.
+  const scanStart = Math.max(0, Math.floor(h * 0.4));
+  const scanH = h - scanStart;
+  let lastContentY = h;
+  try {
+    const data = sctx.getImageData(0, scanStart, w, scanH).data;
+    const rowBytes = w * 4;
+    const THRESHOLD = 12;  // RGB channel value above which we call it "content"
+
+    // Scan rows bottom-up; first row with any non-black pixel = content end
+    outer:
+    for (let row = scanH - 1; row >= 0; row--) {
+      const rowOffset = row * rowBytes;
+      for (let col = 0; col < rowBytes; col += 4) {
+        if (
+          data[rowOffset + col]     > THRESHOLD ||
+          data[rowOffset + col + 1] > THRESHOLD ||
+          data[rowOffset + col + 2] > THRESHOLD
+        ) {
+          lastContentY = scanStart + row + 1;
+          break outer;
+        }
+      }
+    }
+  } catch (e) {
+    // CORS taint or similar — bail out and just use the full canvas
+    console.warn("Crop scan failed, exporting full canvas:", e);
+    return srcCanvas;
+  }
+
+  // Compute final crop height with padding + min-height clamp + max bound
+  const cropH = Math.max(minHeight, Math.min(h, lastContentY + paddingBelow));
+  if (cropH >= h) return srcCanvas;  // nothing to crop
+
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = cropH;
+  out.getContext("2d").drawImage(srcCanvas, 0, 0, w, cropH, 0, 0, w, cropH);
+  return out;
+}
+
 // Returns { caption, source: "ai" | "fallback", error? }
 async function fetchAiCaption(headline, timeoutMs = 12000) {
   const fallback = headline.replace(/\[|\]/g, "").trim().slice(0, 280);
@@ -216,10 +267,13 @@ postXBtn.addEventListener("click", () => {
   renderPoster();
 
   // Two parallel async operations:
-  //   1. Render canvas → blob (fast, ~50ms)
+  //   1. Render canvas → cropped blob (fast, ~50ms)
   //   2. Call OpenAI for an AI-written caption + hashtags (~1–2s)
   const blobPromise = new Promise((resolve) => {
-    canvas.toBlob((b) => {
+    // Crop the trailing black gradient gap before exporting so the X feed
+    // doesn't show a tall band of black under the headline.
+    const cropped = exportCanvasCroppedToContent(canvas, { paddingBelow: 36, minHeight: 1100 });
+    cropped.toBlob((b) => {
       // Restore preview state: Pix logo + overlays back on
       state.isDownloading = false;
       state.useShortlyLogo = false;
@@ -252,30 +306,20 @@ postXBtn.addEventListener("click", () => {
       return;
     }
 
-    // 2) Trigger PNG download as a reliable fallback
-    const blobUrl = URL.createObjectURL(blob);
-    const dl = document.createElement("a");
-    dl.href = blobUrl;
-    dl.download = `${slugify(headline || "pix-post")}.png`;
-    dl.click();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-
-    // 3) Wait for AI caption (already in flight), then open X with it
+    // 2) Wait for AI caption (already in flight), then open X with it
     setPostStatus("Opening X…");
     const { caption, source, error } = await captionPromise;
     const intentUrl = `https://x.com/intent/post?text=${encodeURIComponent(caption)}`;
     const win = window.open(intentUrl, "_blank", "noopener,noreferrer");
 
-    // 4) Status — surface AI failures clearly so we can debug
+    // 3) Status — surface AI failures clearly so we can debug
     postXStatus.textContent = "";
     if (source === "ai") {
       postXStatus.className = "status-text success";
       postXStatus.append(
-        clipboardOk && win
+        clipboardOk
           ? "✓ AI caption written, image copied — Ctrl+V on the X tab."
-          : clipboardOk
-            ? "✓ AI caption written, image copied. "
-            : "✓ AI caption written, image downloaded — attach it on X. "
+          : "⚠ AI caption written but couldn't access clipboard — allow clipboard permission and retry."
       );
     } else {
       // AI failed — make it visible
