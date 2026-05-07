@@ -306,20 +306,29 @@ postXBtn.addEventListener("click", () => {
       return;
     }
 
-    // 2) Wait for AI caption (already in flight), then open X with it
+    // 2) Trigger PNG download so the user has the file even if clipboard
+    //    paste fails (mobile X tab, browser permissions, etc.)
+    const blobUrl = URL.createObjectURL(blob);
+    const dl = document.createElement("a");
+    dl.href = blobUrl;
+    dl.download = `${slugify(headline || "pix-post")}.png`;
+    dl.click();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+
+    // 3) Wait for AI caption (already in flight), then open X with it
     setPostStatus("Opening X…");
     const { caption, source, error } = await captionPromise;
     const intentUrl = `https://x.com/intent/post?text=${encodeURIComponent(caption)}`;
     const win = window.open(intentUrl, "_blank", "noopener,noreferrer");
 
-    // 3) Status — surface AI failures clearly so we can debug
+    // 4) Status — surface AI failures clearly so we can debug
     postXStatus.textContent = "";
     if (source === "ai") {
       postXStatus.className = "status-text success";
       postXStatus.append(
         clipboardOk
-          ? "✓ AI caption written, image copied — Ctrl+V on the X tab."
-          : "⚠ AI caption written but couldn't access clipboard — allow clipboard permission and retry."
+          ? "✓ Caption ready, image copied + downloaded — Ctrl+V on the X tab."
+          : "✓ Caption ready, image downloaded — attach it on the X tab."
       );
     } else {
       // AI failed — make it visible
