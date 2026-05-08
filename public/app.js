@@ -136,6 +136,15 @@ function getLayout() {
   return LAYOUT_PRESETS[state.aspectRatio] || LAYOUT_PRESETS["9:16"];
 }
 
+/* ── Highlight bracket syntax ──
+   Users wrap words to highlight them. All three pairs are equivalent:
+       [Modi]     (Modi)     {Modi}
+   We expose a single character class that matches any of those six chars,
+   so every place that strips/checks brackets goes through these. */
+const HIGHLIGHT_OPEN_CHAR  = /[\[({]/;     // matches  [  (  {
+const HIGHLIGHT_CLOSE_CHAR = /[\])}]/;     // matches  ]  )  }
+const HIGHLIGHT_ANY_CHARS_GLOBAL = /[\[\](){}]/g;  // any bracket char, /g for replace
+
 // Switch ratio: resize canvas, reset any pan that no longer makes sense, re-render.
 function applyAspectRatio(ratio) {
   if (!LAYOUT_PRESETS[ratio]) return;
@@ -334,7 +343,7 @@ function exportCanvasCroppedToContent(srcCanvas, { paddingBelow = 32, minHeight 
 
 // Returns { caption, source: "ai" | "fallback", error? }
 async function fetchAiCaption(headline, timeoutMs = 12000) {
-  const fallback = headline.replace(/\[|\]/g, "").trim().slice(0, 280);
+  const fallback = headline.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, "").trim().slice(0, 280);
   if (!headline.trim()) return { caption: fallback, source: "fallback", error: "empty headline" };
   try {
     const ctrl = new AbortController();
@@ -1071,9 +1080,9 @@ function drawHeadline() {
     let segments = [];
 
     rawWords.forEach((rawWord, i) => {
-      const isOpening = rawWord.includes('[');
-      const isClosing = rawWord.includes(']');
-      const cleanWord = rawWord.replace(/[\[\]]/g, '');
+      const isOpening = HIGHLIGHT_OPEN_CHAR.test(rawWord);
+      const isClosing = HIGHLIGHT_CLOSE_CHAR.test(rawWord);
+      const cleanWord = rawWord.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, '');
 
       if (isOpening) currentlyHighlighted = true;
 
@@ -1136,7 +1145,7 @@ function drawHeadline() {
     const y = top + lineIndex * layout.lineHeight;
 
     for (const rawWord of rawWords) {
-      const cleanWord = rawWord.replace(/[\[\]]/g, '');
+      const cleanWord = rawWord.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, '');
       if (cleanWord.length > 0) {
         ctx.fillStyle = "#ffffff"; // All text is white
         ctx.fillText(cleanWord + " ", cursor, y);
@@ -1355,7 +1364,7 @@ function wrapWords(words, maxWidth) {
   for (const word of words) {
     const test = current ? `${current} ${word}` : word;
     // Strip bracket markers when measuring text width
-    if (ctx.measureText(test.replace(/[\[\]]/g, '')).width <= maxWidth) {
+    if (ctx.measureText(test.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, '')).width <= maxWidth) {
       current = test;
     } else {
       if (current) lines.push(current);
@@ -1378,7 +1387,7 @@ function rebalanceLines(lines, maxWidth) {
 
     const moved = `${balanced[i]} ${nextWords[0]}`;
     // Strip bracket markers when measuring text width
-    if (ctx.measureText(moved.replace(/[\[\]]/g, '')).width <= maxWidth * 0.98) {
+    if (ctx.measureText(moved.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, '')).width <= maxWidth * 0.98) {
       balanced[i] = moved;
       nextWords.shift();
       balanced[i + 1] = nextWords.join(" ");
