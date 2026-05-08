@@ -143,6 +143,7 @@ writeApplyBtn.addEventListener("click", () => {
   editPanel.hidden = false;
   imagePanel.hidden = false;
   renderPoster();
+  scrollPreviewIntoViewIfMobile();
 });
 
 // Live sync: write-headline → headline-edit → poster
@@ -156,6 +157,20 @@ scrapeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   await runScrape();
 });
+
+// On mobile, after a Build, scroll the preview into view so the user
+// gets visual confirmation without having to scroll up.
+function scrollPreviewIntoViewIfMobile() {
+  if (window.matchMedia("(max-width: 760px)").matches) {
+    const previewPanel = document.querySelector(".preview-panel");
+    if (previewPanel) {
+      // Use rAF so the DOM has settled (panels may have just become visible).
+      requestAnimationFrame(() => {
+        previewPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }
+}
 
 /* ── Post to X ── */
 const postXBtn    = document.getElementById("post-x-btn");
@@ -561,6 +576,7 @@ async function runScrape() {
     headlineEdit.value = payload.title || "";
     editPanel.hidden = false;
     imagePanel.hidden = false;
+    scrollPreviewIntoViewIfMobile();
 
     // Load scraped image
     if (payload.imageProxy) {

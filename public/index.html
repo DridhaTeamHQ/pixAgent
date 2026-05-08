@@ -2,9 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="format-detection" content="telephone=no" />
   <title>Pix — Post Builder</title>
   <meta name="description" content="Paste a news article URL, scrape the headline and image, then edit and download a beautiful 9:16 poster." />
+
+  <!-- Mobile browser chrome / iOS home-screen behavior -->
+  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Pix" />
+
   <link rel="stylesheet" href="./styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -42,7 +51,7 @@
           <input id="scrape-url" type="url" placeholder="https://example.com/article" required />
         </label>
         <button type="submit" class="btn-primary" id="scrape-btn">⚡ Scrape &amp; Build</button>
-        <p id="scrape-status" class="status-text">Ready — paste a URL and hit scrape.</p>
+        <p id="scrape-status" class="status-text" role="status" aria-live="polite">Ready — paste a URL and hit scrape.</p>
       </form>
 
       <!-- Mode: Write Text -->
@@ -155,7 +164,7 @@
         <button type="button" id="download-btn" class="btn-primary btn-success">
           📥 Download Poster PNG
         </button>
-        <p id="post-x-status" class="status-text"></p>
+        <p id="post-x-status" class="status-text" role="status" aria-live="polite"></p>
       </div>
     </section>
 
