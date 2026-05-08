@@ -708,6 +708,70 @@ if (fabEdit)       fabEdit.addEventListener("click", () => setSheetOpen(!documen
 if (sheetBackdrop) sheetBackdrop.addEventListener("click", () => setSheetOpen(false));
 if (sheetClose)    sheetClose.addEventListener("click", () => setSheetOpen(false));
 
+/* ── Swipe-to-close gesture on the sheet handle ── */
+(function attachSheetSwipe() {
+  const handle = document.querySelector(".sheet-handle");
+  if (!handle || !editSheet) return;
+
+  let startY     = null;     // touch start clientY
+  let dragY      = 0;        // current downward delta
+  let isDragging = false;
+  const CLOSE_PX = 90;       // drag this far → close
+
+  function onStart(e) {
+    if (!document.body.classList.contains("sheet-open")) return;
+    const point = e.touches ? e.touches[0] : e;
+    startY = point.clientY;
+    dragY = 0;
+    isDragging = true;
+    // Disable CSS transition during drag so transform tracks finger 1:1
+    editSheet.style.transition = "none";
+  }
+
+  function onMove(e) {
+    if (!isDragging) return;
+    const point = e.touches ? e.touches[0] : e;
+    const dy = point.clientY - startY;
+    if (dy <= 0) {
+      // Pulling up — slight rubber-band, then clamp at 0
+      dragY = Math.max(-12, dy / 6);
+    } else {
+      dragY = dy;
+    }
+    editSheet.style.transform = `translateY(${dragY}px)`;
+  }
+
+  function onEnd() {
+    if (!isDragging) return;
+    isDragging = false;
+    editSheet.style.transition = "";   // restore CSS transition
+    if (dragY > CLOSE_PX) {
+      editSheet.style.transform = "";  // let .sheet-open class take over
+      setSheetOpen(false);
+    } else {
+      editSheet.style.transform = "";  // snap back to fully open
+    }
+    startY = null;
+    dragY = 0;
+  }
+
+  // Touch (iOS / Android)
+  handle.addEventListener("touchstart", onStart, { passive: true });
+  handle.addEventListener("touchmove",  onMove,  { passive: true });
+  handle.addEventListener("touchend",   onEnd);
+  handle.addEventListener("touchcancel", onEnd);
+
+  // Pointer (desktop drag — useful for testing)
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    onStart(e);
+    handle.setPointerCapture?.(e.pointerId);
+  });
+  handle.addEventListener("pointermove", onMove);
+  handle.addEventListener("pointerup",   onEnd);
+  handle.addEventListener("pointercancel", onEnd);
+})();
+
 // Close the sheet on Escape (a11y)
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && document.body.classList.contains("sheet-open")) setSheetOpen(false);
