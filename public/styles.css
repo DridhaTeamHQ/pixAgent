@@ -871,6 +871,17 @@ canvas.dragging { cursor: grabbing; }
   opacity: 0.85;
 }
 
+/* ─── Mobile bottom-sheet system ─────────────────────────────
+   Desktop: .edit-sheet is invisible to layout (display:contents),
+   .fab and .sheet-backdrop are fully hidden.
+   Mobile:  see the @media block — sheet slides up from the bottom,
+   backdrop dims the rest, FAB toggles open/close.
+*/
+.edit-sheet { display: contents; }
+.sheet-handle { display: none; }
+.fab,
+.sheet-backdrop { display: none; }
+
 /* ─── Responsive ─────────────────────────────────────────────── */
 
 /* Tablet — controls + image panels collapse into the left column,
@@ -906,26 +917,22 @@ canvas.dragging { cursor: grabbing; }
   .app-shell {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
-    gap: 12px;
-    width: calc(100vw - 20px);
-    /* Bottom margin reserves room for the fixed action bar */
-    margin: 10px auto calc(96px + env(safe-area-inset-bottom));
+    gap: 0;
+    width: calc(100vw - 14px);
+    margin: 8px auto calc(96px + env(safe-area-inset-bottom));
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
   }
 
-  /* Order: preview first (sticky), then controls, then image panel */
+  /* Only the preview is in the document flow on mobile — the editor
+     panels move into the bottom sheet and only show when the FAB is tapped. */
   .preview-panel  { grid-column: 1; grid-row: 1; order: 1; }
-  .controls-panel { grid-column: 1; grid-row: 2; order: 2; }
-  .image-panel    { grid-column: 1; grid-row: 3; order: 3; }
 
-  /* ── STICKY PREVIEW at top of viewport so the live result is always
-        visible while scrolling through controls below.                 */
+  /* PREVIEW takes the full visible area above the action bar */
   .preview-panel {
-    position: sticky;
-    top: calc(50px + 8px);    /* navbar + small gap */
+    position: static;
     z-index: 20;
-    padding: 14px;
+    padding: 12px;
     height: auto;
     max-height: none;
   }
@@ -934,34 +941,180 @@ canvas.dragging { cursor: grabbing; }
   .preview-title  { font-size: 0.85rem; }
   .preview-pixels { font-size: 0.7rem; padding: 3px 8px; }
 
-  /* Canvas constrained so the preview block stays around half the viewport */
   .canvas-container {
-    padding: 8px;
-    max-height: 48vh;
+    padding: 10px;
+    max-height: calc(100vh - 50px - 100px - env(safe-area-inset-bottom));
     border-radius: 14px;
   }
   canvas {
-    max-height: calc(48vh - 16px);
+    max-height: calc(100vh - 50px - 120px - env(safe-area-inset-bottom));
     border-radius: 10px;
     box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255,255,255,0.04);
   }
 
-  /* Image panel, no sticky, just normal flow */
-  .image-panel {
-    position: static;
-    max-height: none;
-    height: auto;
+  /* ─── Bottom sheet (controls + image panels, hidden until FAB tap) ─── */
+  .edit-sheet {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 80;
+    max-height: 88vh;
+    overflow: hidden;
+    background: rgba(12, 12, 18, 0.96);
+    backdrop-filter: blur(28px) saturate(160%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 22px 22px 0 0;
+    box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.55);
+    padding-bottom: env(safe-area-inset-bottom);
+    /* Slide off-screen by default */
+    transform: translateY(102%);
+    transition: transform 0.36s cubic-bezier(0.32, 0.72, 0, 1);
+    pointer-events: none;
+  }
+  body.sheet-open .edit-sheet {
+    transform: translateY(0);
+    pointer-events: auto;
   }
 
-  /* Inner padding tuned for narrow widths */
-  .controls-panel { padding: 16px 16px 18px; }
-  .image-panel    { padding: 12px 16px 18px; }
+  /* Sheet header bar — drag pill + title + close */
+  .sheet-handle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px 4px;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .sheet-handle-pill {
+    position: absolute;
+    top: 6px; left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 100px;
+  }
+  .sheet-title {
+    margin-left: 4px;
+    margin-top: 12px;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+  }
+  .sheet-close {
+    margin-top: 12px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: var(--transition);
+  }
+  .sheet-close:hover { color: #fff; background: rgba(255, 255, 255, 0.09); }
+
+  /* Editor panels lose their card styling inside the sheet — sheet IS the card */
+  .edit-sheet .glass-panel {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-radius: 0;
+    padding: 4px 16px;
+  }
+  .edit-sheet .controls-panel,
+  .edit-sheet .image-panel {
+    overflow: visible;
+  }
+  /* The two panels stack and scroll TOGETHER inside the sheet */
+  .edit-sheet > .controls-panel,
+  .edit-sheet > .image-panel {
+    flex: 0 0 auto;
+  }
+  .edit-sheet {
+    /* Make the inner area scrollable */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .edit-sheet > .sheet-handle {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: rgba(12, 12, 18, 0.92);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 10px;
+  }
+
+  /* Hide the controls-panel header copy on mobile (h1 + desc) — not needed in
+     the sheet. Mode tabs + form still show. */
+  .edit-sheet .panel-copy { display: none; }
+  .edit-sheet .panel-title { display: none; }
 
   h1 { font-size: 1.45rem; line-height: 1.05; }
   p.desc { font-size: 0.82rem; max-width: 100%; margin-bottom: 8px; }
-  .panel-title { font-size: 0.78rem; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); font-weight: 700; }
 
-  /* ── FIXED ACTION BAR at bottom — Post to X + Download always reachable */
+  /* ─── Floating Action Button (FAB) ─── */
+  .fab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    right: 16px;
+    bottom: calc(96px + env(safe-area-inset-bottom));
+    z-index: 70;
+    width: 54px;
+    height: 54px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent) 0%, #5d5df0 100%);
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 10px 28px rgba(155, 114, 239, 0.42), 0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.18);
+    transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1),
+                box-shadow 0.25s,
+                opacity 0.2s;
+  }
+  .fab:active { transform: scale(0.94); }
+  body.sheet-open .fab {
+    /* Hide FAB while sheet is open — close button + backdrop are the way out */
+    transform: scale(0) rotate(180deg);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Backdrop behind the sheet */
+  .sheet-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 75;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+  body.sheet-open .sheet-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  body.sheet-open { overflow: hidden; }
+
+  /* ─── Action bar (Post to X + Download) — fixed at bottom on mobile ─── */
   .download-wrap {
     position: fixed;
     left: 0;
@@ -971,7 +1124,7 @@ canvas.dragging { cursor: grabbing; }
     margin: 0;
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 8px;
     background: linear-gradient(180deg, rgba(10,10,15,0.0) 0%, rgba(10,10,15,0.92) 22%, rgba(10,10,15,0.98) 100%);
     backdrop-filter: blur(18px);
@@ -983,11 +1136,8 @@ canvas.dragging { cursor: grabbing; }
     margin: 0;
     min-height: 46px;
   }
-  /* Buttons sit side-by-side on slightly wider phones, stacked on small */
-  .download-wrap { flex-direction: row; }
   .download-wrap .btn-x { flex: 0 0 44%; }
   .download-wrap .btn-primary { flex: 1; }
-  /* Status moves below the buttons, full-width */
   .download-wrap #post-x-status {
     flex: 1 0 100%;
     margin: 2px 4px 0;

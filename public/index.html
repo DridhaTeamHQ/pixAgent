@@ -37,7 +37,37 @@
     <span class="nav-badge">Beta</span>
   </nav>
 
+  <!-- Mobile-only floating "edit" button — tap to pop up the controls sheet.
+       Hidden on desktop (CSS); opening sets body.sheet-open. -->
+  <button type="button" id="fab-edit" class="fab" aria-label="Edit poster" aria-expanded="false" aria-controls="edit-sheet">
+    <svg class="fab-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path d="M4 6h10M4 12h16M4 18h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="17" cy="6"  r="2.6" fill="currentColor"/>
+      <circle cx="7"  cy="12" r="2.6" fill="currentColor"/>
+      <circle cx="14" cy="18" r="2.6" fill="currentColor"/>
+    </svg>
+  </button>
+
+  <!-- Backdrop behind the bottom sheet (mobile). Tap to close. -->
+  <div id="sheet-backdrop" class="sheet-backdrop" aria-hidden="true"></div>
+
   <main class="app-shell" id="app">
+
+    <!-- ═══ Edit sheet — wraps both editor panels.
+         Desktop:  display: contents  → children flow as grid items (3-col).
+         Mobile:   transforms into a fixed bottom-sheet that slides up. ═══ -->
+    <div class="edit-sheet" id="edit-sheet">
+
+      <!-- Sheet header (mobile only) — drag handle + title + close -->
+      <div class="sheet-handle" aria-hidden="true">
+        <span class="sheet-handle-pill"></span>
+        <span class="sheet-title">Edit Poster</span>
+        <button type="button" id="sheet-close" class="sheet-close" aria-label="Close">
+          <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+            <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
 
     <!-- ═══ COL 1: Text & Style controls ═══ -->
     <section class="glass-panel controls-panel">
@@ -242,6 +272,8 @@
       </div>
 
     </section>
+
+    </div><!-- /.edit-sheet -->
 
     <!-- ═══ COL 3: Live Preview ═══ -->
     <section class="glass-panel preview-panel">

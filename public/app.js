@@ -252,6 +252,7 @@ writeApplyBtn.addEventListener("click", () => {
   imagePanel.hidden = false;
   renderPoster();
   scrollPreviewIntoViewIfMobile();
+  closeSheetIfMobile();
 });
 
 // Live sync: write-headline → headline-edit → poster
@@ -684,6 +685,40 @@ document.addEventListener("click", (e) => {
   }
 });
 
+/* ── Mobile bottom-sheet (FAB → controls popup) ──
+   On mobile, the editor panels live inside .edit-sheet which is hidden
+   off-screen by default. The FAB toggles `body.sheet-open` to slide it up;
+   tapping the backdrop or the close button drops it back down. */
+const fabEdit       = document.getElementById("fab-edit");
+const sheetBackdrop = document.getElementById("sheet-backdrop");
+const sheetClose    = document.getElementById("sheet-close");
+const editSheet     = document.getElementById("edit-sheet");
+
+function setSheetOpen(open) {
+  document.body.classList.toggle("sheet-open", open);
+  if (fabEdit) fabEdit.setAttribute("aria-expanded", open ? "true" : "false");
+  if (sheetBackdrop) sheetBackdrop.setAttribute("aria-hidden", open ? "false" : "true");
+  if (open && editSheet) {
+    // Reset scroll to top when opening so the user starts at the first section
+    requestAnimationFrame(() => editSheet.scrollTo({ top: 0, behavior: "instant" }));
+  }
+}
+
+if (fabEdit)       fabEdit.addEventListener("click", () => setSheetOpen(!document.body.classList.contains("sheet-open")));
+if (sheetBackdrop) sheetBackdrop.addEventListener("click", () => setSheetOpen(false));
+if (sheetClose)    sheetClose.addEventListener("click", () => setSheetOpen(false));
+
+// Close the sheet on Escape (a11y)
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.body.classList.contains("sheet-open")) setSheetOpen(false);
+});
+
+// Auto-close the sheet after a successful Build/scrape on mobile so the user
+// instantly sees their poster.
+function closeSheetIfMobile() {
+  if (window.matchMedia("(max-width: 760px)").matches) setSheetOpen(false);
+}
+
 // On first load, collapse all accordions on mobile so the panel is compact
 function setInitialAccordionState() {
   if (!isMobile()) return;
@@ -696,6 +731,13 @@ function setInitialAccordionState() {
   });
 }
 setInitialAccordionState();
+
+// On mobile first load, open the sheet so the URL input + Build button are
+// immediately visible. After a successful build, the sheet auto-closes
+// (via closeSheetIfMobile) and the FAB takes over for re-editing.
+if (window.matchMedia("(max-width: 760px)").matches) {
+  setSheetOpen(true);
+}
 window.addEventListener("resize", () => {
   // Re-apply on viewport class crossings (mobile↔desktop) for sanity
   const isMob = isMobile();
@@ -835,6 +877,7 @@ async function runScrape() {
     editPanel.hidden = false;
     imagePanel.hidden = false;
     scrollPreviewIntoViewIfMobile();
+    closeSheetIfMobile();
 
     // Load scraped image
     if (payload.imageProxy) {
