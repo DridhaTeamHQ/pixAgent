@@ -163,11 +163,41 @@
           <span class="slider-label">Pan Y</span>
           <input type="range" id="img-offset-y" min="-500" max="500" value="0" />
         </label>
-        <label class="slider-container" style="margin-bottom:12px;">
+        <label class="slider-container" style="margin-bottom:0;">
           <span class="slider-label">Opacity</span>
           <input type="range" id="overlay-opacity" min="0" max="100" value="100" />
         </label>
-        <button type="button" id="img-reset-btn" class="btn-secondary">↺ Reset Image</button>
+      </div>
+
+      <!-- Filters: one-tap presets + fine-tune sliders -->
+      <div class="section">
+        <span class="section-label">Filters</span>
+        <div class="preset-grid" id="filter-presets" style="margin-bottom:12px;">
+          <button type="button" class="preset-btn active" data-filter="none">None</button>
+          <button type="button" class="preset-btn" data-filter="vivid">Vivid</button>
+          <button type="button" class="preset-btn" data-filter="bw">B&amp;W</button>
+          <button type="button" class="preset-btn" data-filter="warm">Warm</button>
+          <button type="button" class="preset-btn" data-filter="cool">Cool</button>
+          <button type="button" class="preset-btn" data-filter="faded">Faded</button>
+          <button type="button" class="preset-btn" data-filter="soft">Soft</button>
+        </div>
+        <label class="slider-container">
+          <span class="slider-label">Bright</span>
+          <input type="range" id="filter-brightness" min="0" max="200" value="100" />
+        </label>
+        <label class="slider-container">
+          <span class="slider-label">Contrast</span>
+          <input type="range" id="filter-contrast" min="0" max="200" value="100" />
+        </label>
+        <label class="slider-container">
+          <span class="slider-label">Saturate</span>
+          <input type="range" id="filter-saturation" min="0" max="200" value="100" />
+        </label>
+        <label class="slider-container" style="margin-bottom:12px;">
+          <span class="slider-label">Blur</span>
+          <input type="range" id="filter-blur" min="0" max="20" value="0" />
+        </label>
+        <button type="button" id="img-reset-btn" class="btn-secondary">↺ Reset Image &amp; Filters</button>
       </div>
 
     </section>

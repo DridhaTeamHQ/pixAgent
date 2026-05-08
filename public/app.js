@@ -100,7 +100,35 @@ const state = {
   secondLogoImage: null,
   tag: "none",       // "none" | "trending" | "breaking"
   tagImages: {},     // { trending: Image, breaking: Image }
-  isDownloading: false
+  isDownloading: false,
+
+  /* ── Image filters (CSS-style values applied via ctx.filter) ── */
+  filterBrightness: 100,    // 0–200 (100 = neutral)
+  filterContrast:   100,    // 0–200
+  filterSaturation: 100,    // 0–200
+  filterBlur:       0,      // 0–20 px
+  filterPreset:     "none", // identifier of the active preset chip, if any
+};
+
+// Build the ctx.filter string from current state values.
+function buildFilterString() {
+  return [
+    `brightness(${state.filterBrightness}%)`,
+    `contrast(${state.filterContrast}%)`,
+    `saturate(${state.filterSaturation}%)`,
+    `blur(${state.filterBlur}px)`,
+  ].join(" ");
+}
+
+// Filter presets — pure value bundles, applied by clicking a chip.
+const FILTER_PRESETS = {
+  "none":    { brightness: 100, contrast: 100, saturation: 100, blur: 0 },
+  "vivid":   { brightness: 105, contrast: 120, saturation: 145, blur: 0 },
+  "bw":      { brightness: 105, contrast: 110, saturation: 0,   blur: 0 },
+  "warm":    { brightness: 102, contrast: 108, saturation: 130, blur: 0 },
+  "cool":    { brightness: 100, contrast: 110, saturation: 90,  blur: 0 },
+  "faded":   { brightness: 108, contrast: 88,  saturation: 80,  blur: 0 },
+  "soft":    { brightness: 105, contrast: 95,  saturation: 105, blur: 1 },
 };
 
 // Active layout preset (always read through this; never hard-code coords).
@@ -477,13 +505,75 @@ imgOffsetY.addEventListener("input", () => {
 });
 
 imgResetBtn.addEventListener("click", () => {
+  // Pan + zoom reset
   state.imageOffset = { x: 0, y: 0 };
   state.imageZoom = 100;
   imgOffsetX.value = 0;
   imgOffsetY.value = 0;
   imgZoom.value = 100;
+
+  // Filters reset
+  applyFilterPreset("none");
+
   renderPoster();
 });
+
+/* ── Filters ── */
+const filterBrightnessInput = document.getElementById("filter-brightness");
+const filterContrastInput   = document.getElementById("filter-contrast");
+const filterSaturationInput = document.getElementById("filter-saturation");
+const filterBlurInput       = document.getElementById("filter-blur");
+const filterPresetsContainer = document.getElementById("filter-presets");
+
+function syncFilterUI() {
+  if (filterBrightnessInput) filterBrightnessInput.value = state.filterBrightness;
+  if (filterContrastInput)   filterContrastInput.value   = state.filterContrast;
+  if (filterSaturationInput) filterSaturationInput.value = state.filterSaturation;
+  if (filterBlurInput)       filterBlurInput.value       = state.filterBlur;
+  if (filterPresetsContainer) {
+    filterPresetsContainer.querySelectorAll(".preset-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.filter === state.filterPreset);
+    });
+  }
+}
+
+function applyFilterPreset(name) {
+  const p = FILTER_PRESETS[name] || FILTER_PRESETS["none"];
+  state.filterBrightness = p.brightness;
+  state.filterContrast   = p.contrast;
+  state.filterSaturation = p.saturation;
+  state.filterBlur       = p.blur;
+  state.filterPreset     = name;
+  syncFilterUI();
+}
+
+[
+  [filterBrightnessInput, "filterBrightness"],
+  [filterContrastInput,   "filterContrast"],
+  [filterSaturationInput, "filterSaturation"],
+  [filterBlurInput,       "filterBlur"],
+].forEach(([el, key]) => {
+  if (!el) return;
+  el.addEventListener("input", () => {
+    state[key] = Number(el.value);
+    // Manual edit means it's no longer a known preset — clear active chip
+    state.filterPreset = "custom";
+    if (filterPresetsContainer) {
+      filterPresetsContainer.querySelectorAll(".preset-btn")
+        .forEach(b => b.classList.remove("active"));
+    }
+    renderPoster();
+  });
+});
+
+if (filterPresetsContainer) {
+  filterPresetsContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest(".preset-btn");
+    if (!btn) return;
+    applyFilterPreset(btn.dataset.filter);
+    renderPoster();
+  });
+}
 
 // Zoom slider
 imgZoom.addEventListener("input", () => {
@@ -1329,7 +1419,13 @@ function drawCoverImage(image, x, y, width, height, offset, zoom) {
   dx = clamp(dx, minX, x);
   dy = clamp(dy, minY, y);
 
+  // Apply filters (brightness/contrast/saturation/blur) only to the image
+  // layer — gradient, headline, logo, etc. should NOT be filtered. Reset to
+  // "none" immediately after the draw so subsequent layers render normally.
+  ctx.save();
+  ctx.filter = buildFilterString();
   ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
+  ctx.restore();
 }
 
 function clamp(value, min, max) {
