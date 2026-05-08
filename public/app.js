@@ -554,6 +554,12 @@ function applyFilterPreset(name) {
   state.filterBlur       = p.blur;
   state.filterPreset     = name;
   syncFilterUI();
+  // Reflect in the collapsed accordion header pill
+  const meta = document.getElementById("acc-meta-filter");
+  if (meta) {
+    const labels = { none:"None", vivid:"Vivid", bw:"B&W", warm:"Warm", cool:"Cool", faded:"Faded", soft:"Soft", custom:"Custom" };
+    meta.textContent = labels[name] || "";
+  }
 }
 
 [
@@ -571,6 +577,8 @@ function applyFilterPreset(name) {
       filterPresetsContainer.querySelectorAll(".preset-btn")
         .forEach(b => b.classList.remove("active"));
     }
+    const meta = document.getElementById("acc-meta-filter");
+    if (meta) meta.textContent = "Custom";
     renderPoster();
   });
 });
@@ -633,8 +641,72 @@ if (ratioPresetsContainer) {
       b.setAttribute("aria-checked", b === btn ? "true" : "false");
     });
     applyAspectRatio(ratio);
+    // Reflect in the collapsed accordion header pill
+    const meta = document.getElementById("acc-meta-ratio");
+    if (meta) meta.textContent = ratio;
   });
 }
+
+/* ── Accordion toggle ──
+   Clicking a header flips the data-open attr on its parent .acc; CSS
+   handles the smooth height transition via grid-template-rows.
+   On mobile, toggling one section will close the others (single-open
+   mode) so the panel stays compact. */
+const isMobile = () => window.matchMedia("(max-width: 760px)").matches;
+
+document.addEventListener("click", (e) => {
+  const head = e.target.closest(".acc-head");
+  if (!head) return;
+  const acc  = head.parentElement;
+  if (!acc || !acc.classList.contains("acc")) return;
+
+  const opening = acc.dataset.open !== "true";
+  if (opening && isMobile()) {
+    // Single-open mode: close all sibling accordions inside the same .acc-list
+    const list = acc.closest(".acc-list");
+    if (list) {
+      list.querySelectorAll(":scope > .acc[data-open='true']").forEach(o => {
+        o.dataset.open = "false";
+        const h = o.querySelector(":scope > .acc-head");
+        if (h) h.setAttribute("aria-expanded", "false");
+      });
+    }
+  }
+
+  acc.dataset.open = opening ? "true" : "false";
+  head.setAttribute("aria-expanded", opening ? "true" : "false");
+
+  // When opening on mobile, scroll the header into a comfortable view
+  if (opening && isMobile()) {
+    requestAnimationFrame(() => {
+      head.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+});
+
+// On first load, collapse all accordions on mobile so the panel is compact
+function setInitialAccordionState() {
+  if (!isMobile()) return;
+  document.querySelectorAll(".acc").forEach((acc, i) => {
+    // Keep just the first accordion (Aspect Ratio) open by default
+    const open = i === 0;
+    acc.dataset.open = open ? "true" : "false";
+    const h = acc.querySelector(":scope > .acc-head");
+    if (h) h.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+}
+setInitialAccordionState();
+window.addEventListener("resize", () => {
+  // Re-apply on viewport class crossings (mobile↔desktop) for sanity
+  const isMob = isMobile();
+  document.querySelectorAll(".acc").forEach((acc) => {
+    if (!isMob) {
+      acc.dataset.open = "true";
+      const h = acc.querySelector(":scope > .acc-head");
+      if (h) h.setAttribute("aria-expanded", "true");
+    }
+  });
+});
 
 // Background image upload
 bgImageUpload.addEventListener("change", (e) => {

@@ -260,6 +260,99 @@ p.desc {
   display: block;
 }
 
+/* ─── Accordion sections ──────────────────────────────────────
+   Tap-to-expand groups so the controls panel stays compact on every
+   screen size. Animation uses the grid-template-rows: 0fr → 1fr trick
+   which gives smooth CSS-only height transitions in all modern browsers. */
+
+.acc-list { display: flex; flex-direction: column; gap: 6px; }
+
+.acc {
+  border-top: 1px solid var(--border-subtle);
+}
+.acc-list > .acc:first-child { border-top: none; }
+
+.acc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 2px;
+  background: transparent;
+  border: 0;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: color 0.15s;
+}
+
+.acc-head:hover { color: #fff; }
+
+.acc-title { flex: 1; }
+
+.acc-meta {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 3px 9px;
+  border-radius: 100px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.acc-chevron {
+  color: var(--text-secondary);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.acc[data-open="true"] > .acc-head .acc-chevron {
+  transform: rotate(0deg);
+}
+.acc[data-open="false"] > .acc-head .acc-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Smooth height collapse using grid-template-rows trick */
+.acc-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.acc[data-open="false"] > .acc-body {
+  grid-template-rows: 0fr;
+}
+
+.acc-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.acc[data-open="true"] > .acc-body > .acc-inner {
+  /* Padding only when open — keeps the closed height truly 0 */
+  padding-bottom: 14px;
+}
+
+.acc-subtitle {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 14px 0 8px;
+}
+.acc-inner > :first-child + .acc-subtitle,
+.acc-inner > .acc-subtitle:first-child { margin-top: 2px; }
+
+.acc-subgroup { margin-top: 16px; }
+
 /* ─── Mode Tabs ──────────────────────────────────────────────── */
 .mode-tabs {
   display: flex;
@@ -813,46 +906,98 @@ canvas.dragging { cursor: grabbing; }
   .app-shell {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
-    gap: 14px;
-    width: calc(100vw - 24px);
-    /* Respect home-indicator inset on iPhones */
-    margin: 12px auto calc(32px + env(safe-area-inset-bottom));
+    gap: 12px;
+    width: calc(100vw - 20px);
+    /* Bottom margin reserves room for the fixed action bar */
+    margin: 10px auto calc(96px + env(safe-area-inset-bottom));
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
   }
 
-  /* Order: preview first (visual feedback), then controls, then bg/image */
+  /* Order: preview first (sticky), then controls, then image panel */
   .preview-panel  { grid-column: 1; grid-row: 1; order: 1; }
   .controls-panel { grid-column: 1; grid-row: 2; order: 2; }
   .image-panel    { grid-column: 1; grid-row: 3; order: 3; }
 
-  /* Kill sticky behaviour on small screens — let everything scroll naturally */
-  .preview-panel,
+  /* ── STICKY PREVIEW at top of viewport so the live result is always
+        visible while scrolling through controls below.                 */
+  .preview-panel {
+    position: sticky;
+    top: calc(50px + 8px);    /* navbar + small gap */
+    z-index: 20;
+    padding: 14px;
+    height: auto;
+    max-height: none;
+  }
+
+  .preview-header { margin-bottom: 10px; }
+  .preview-title  { font-size: 0.85rem; }
+  .preview-pixels { font-size: 0.7rem; padding: 3px 8px; }
+
+  /* Canvas constrained so the preview block stays around half the viewport */
+  .canvas-container {
+    padding: 8px;
+    max-height: 48vh;
+    border-radius: 14px;
+  }
+  canvas {
+    max-height: calc(48vh - 16px);
+    border-radius: 10px;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255,255,255,0.04);
+  }
+
+  /* Image panel, no sticky, just normal flow */
   .image-panel {
     position: static;
     max-height: none;
     height: auto;
   }
-  .preview-panel { padding: 18px; }
-
-  /* Canvas should size to viewport width, capped to a reasonable height
-     so the 9:16 ratio doesn't push everything else off-screen. */
-  .canvas-container {
-    padding: 12px;
-    max-height: 70vh;
-  }
-  canvas {
-    max-height: calc(70vh - 24px);
-    width: auto;
-    height: auto;
-  }
 
   /* Inner padding tuned for narrow widths */
-  .controls-panel { padding: 18px 16px 22px; }
-  .image-panel    { padding: 18px 16px 20px; }
+  .controls-panel { padding: 16px 16px 18px; }
+  .image-panel    { padding: 12px 16px 18px; }
 
-  h1 { font-size: 1.55rem; }
-  p.desc { font-size: 0.83rem; max-width: 100%; }
+  h1 { font-size: 1.45rem; line-height: 1.05; }
+  p.desc { font-size: 0.82rem; max-width: 100%; margin-bottom: 8px; }
+  .panel-title { font-size: 0.78rem; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); font-weight: 700; }
+
+  /* ── FIXED ACTION BAR at bottom — Post to X + Download always reachable */
+  .download-wrap {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    margin: 0;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: linear-gradient(180deg, rgba(10,10,15,0.0) 0%, rgba(10,10,15,0.92) 22%, rgba(10,10,15,0.98) 100%);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .download-wrap .btn-x,
+  .download-wrap .btn-primary {
+    margin: 0;
+    min-height: 46px;
+  }
+  /* Buttons sit side-by-side on slightly wider phones, stacked on small */
+  .download-wrap { flex-direction: row; }
+  .download-wrap .btn-x { flex: 0 0 44%; }
+  .download-wrap .btn-primary { flex: 1; }
+  /* Status moves below the buttons, full-width */
+  .download-wrap #post-x-status {
+    flex: 1 0 100%;
+    margin: 2px 4px 0;
+    text-align: center;
+    font-size: 0.72rem;
+  }
+
+  /* Accordion polish for mobile — slightly larger tap area */
+  .acc-head { padding: 16px 4px; font-size: 0.95rem; min-height: 48px; }
+  .acc-meta { font-size: 0.7rem; }
 
   /* iOS auto-zooms text inputs whose font-size < 16px on focus.
      Bump all form fields to 16px on mobile to suppress that. */
@@ -891,13 +1036,22 @@ canvas.dragging { cursor: grabbing; }
 /* Small phones (≤ 380 px) — squeeze a bit more */
 @media (max-width: 380px) {
   .app-shell {
-    width: calc(100vw - 16px);
-    gap: 12px;
+    width: calc(100vw - 14px);
+    gap: 10px;
   }
-  .controls-panel { padding: 16px 14px 20px; }
-  .image-panel    { padding: 16px 14px 18px; }
-  h1 { font-size: 1.4rem; }
+  .controls-panel { padding: 14px 14px 16px; }
+  .image-panel    { padding: 12px 14px 16px; }
+  h1 { font-size: 1.32rem; }
   .stock-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* Buttons stack vertically — too cramped to sit side-by-side */
+  .download-wrap { flex-direction: column; gap: 6px; }
+  .download-wrap .btn-x,
+  .download-wrap .btn-primary { flex: 1 1 auto; }
+
+  .canvas-container { max-height: 44vh; }
+  canvas { max-height: calc(44vh - 16px); }
+  .preview-panel { top: 56px; }
 }
 
 /* Touch hover suppression — `:hover` styles linger on tap on touch

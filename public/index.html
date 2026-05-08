@@ -21,6 +21,13 @@
 </head>
 <body>
 
+  <!-- Inline SVG sprite (chevron used by every accordion header) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-chevron" viewBox="0 0 14 14">
+      <path d="M3 5l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </symbol>
+  </svg>
+
   <!-- Sticky top navbar -->
   <nav class="app-nav">
     <div class="nav-logo">
@@ -32,16 +39,18 @@
 
   <main class="app-shell" id="app">
 
-    <!-- ── COL 1: Text & Style ── -->
+    <!-- ═══ COL 1: Text & Style controls ═══ -->
     <section class="glass-panel controls-panel">
 
-      <h1>Create your<br>poster.</h1>
-      <p class="desc">Scrape an article or write your own headline.</p>
+      <header class="panel-copy">
+        <h1>Create your<br>poster.</h1>
+        <p class="desc">Scrape an article or write your own headline.</p>
+      </header>
 
       <!-- Mode Tabs -->
-      <div class="mode-tabs" id="mode-tabs">
-        <button type="button" class="mode-tab active" data-mode="link">🔗 Paste Link</button>
-        <button type="button" class="mode-tab" data-mode="write">✏️ Write Text</button>
+      <div class="mode-tabs" id="mode-tabs" role="tablist">
+        <button type="button" class="mode-tab active" data-mode="link" role="tab" aria-selected="true">🔗 Paste Link</button>
+        <button type="button" class="mode-tab" data-mode="write" role="tab" aria-selected="false">✏️ Write Text</button>
       </div>
 
       <!-- Mode: Paste Link -->
@@ -64,145 +73,177 @@
         <button type="button" class="btn-primary" id="write-apply-btn">✨ Build Poster</button>
       </div>
 
-      <!-- ── Edit Controls ── -->
-      <div id="edit-panel" class="edit-panel" hidden>
+      <!-- ═══ Edit accordions (revealed after build) ═══ -->
+      <div id="edit-panel" class="edit-panel acc-list" hidden>
 
-        <div class="section" style="margin-top:22px;">
-          <span class="section-label">Aspect Ratio</span>
-          <div class="ratio-grid" id="ratio-presets" role="radiogroup" aria-label="Aspect ratio">
-            <button type="button" class="ratio-btn active" data-ratio="9:16" role="radio" aria-checked="true">
-              <span class="ratio-icon" data-shape="9-16"></span>
-              <span class="ratio-label">9:16</span>
-              <span class="ratio-sub">Story</span>
-            </button>
-            <button type="button" class="ratio-btn" data-ratio="4:5" role="radio" aria-checked="false">
-              <span class="ratio-icon" data-shape="4-5"></span>
-              <span class="ratio-label">4:5</span>
-              <span class="ratio-sub">Feed</span>
-            </button>
-            <button type="button" class="ratio-btn" data-ratio="1:1" role="radio" aria-checked="false">
-              <span class="ratio-icon" data-shape="1-1"></span>
-              <span class="ratio-label">1:1</span>
-              <span class="ratio-sub">Square</span>
-            </button>
-            <button type="button" class="ratio-btn" data-ratio="16:9" role="radio" aria-checked="false">
-              <span class="ratio-icon" data-shape="16-9"></span>
-              <span class="ratio-label">16:9</span>
-              <span class="ratio-sub">Wide</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="section">
-          <span class="section-label">Headline</span>
-          <textarea id="headline-edit" placeholder="Edit your headline..."></textarea>
-          <small class="helper-text">Wrap words in [brackets], (parens), or {braces} to highlight them.</small>
-        </div>
-
-        <div class="section">
-          <span class="section-label">Tag Badge</span>
-          <div class="preset-grid" id="tag-presets">
-            <button type="button" class="preset-btn active" data-tag="none"          title="No Tag">None</button>
-            <button type="button" class="preset-btn"        data-tag="trending"      title="Trending with icon">🔥 Trending</button>
-            <button type="button" class="preset-btn"        data-tag="trending-text" title="Trending text only">Trending</button>
-            <button type="button" class="preset-btn"        data-tag="breaking"      title="Breaking with icon">⚡ Breaking</button>
-            <button type="button" class="preset-btn"        data-tag="breaking-text" title="Breaking text only">Breaking</button>
-          </div>
-        </div>
-
-        <div class="section">
-          <span class="section-label">Font Size</span>
-          <label class="slider-container" style="margin-bottom:0;">
-            <span class="slider-label">Size</span>
-            <input type="range" id="font-size" min="32" max="90" value="0" />
-          </label>
-        </div>
-
-        <div class="section">
-          <span class="section-label">Accent Color</span>
-          <label class="color-picker-wrap">
-            <div class="color-circle" style="border-color: #7900d9;">
-              <input type="color" id="accent-color" value="#7900d9" />
+        <!-- Aspect Ratio -->
+        <div class="acc" data-open="true">
+          <button type="button" class="acc-head" aria-expanded="true">
+            <span class="acc-title">Aspect Ratio</span>
+            <span class="acc-meta" id="acc-meta-ratio">9:16</span>
+            <svg class="acc-chevron" width="14" height="14"><use href="#i-chevron"/></svg>
+          </button>
+          <div class="acc-body"><div class="acc-inner">
+            <div class="ratio-grid" id="ratio-presets" role="radiogroup" aria-label="Aspect ratio">
+              <button type="button" class="ratio-btn active" data-ratio="9:16" role="radio" aria-checked="true">
+                <span class="ratio-icon" data-shape="9-16"></span>
+                <span class="ratio-label">9:16</span>
+                <span class="ratio-sub">Story</span>
+              </button>
+              <button type="button" class="ratio-btn" data-ratio="4:5" role="radio" aria-checked="false">
+                <span class="ratio-icon" data-shape="4-5"></span>
+                <span class="ratio-label">4:5</span>
+                <span class="ratio-sub">Feed</span>
+              </button>
+              <button type="button" class="ratio-btn" data-ratio="1:1" role="radio" aria-checked="false">
+                <span class="ratio-icon" data-shape="1-1"></span>
+                <span class="ratio-label">1:1</span>
+                <span class="ratio-sub">Square</span>
+              </button>
+              <button type="button" class="ratio-btn" data-ratio="16:9" role="radio" aria-checked="false">
+                <span class="ratio-icon" data-shape="16-9"></span>
+                <span class="ratio-label">16:9</span>
+                <span class="ratio-sub">Wide</span>
+              </button>
             </div>
-            <span class="color-hex" id="accent-hex">#7900D9</span>
+          </div></div>
+        </div>
+
+        <!-- Headline & Tag (combined) -->
+        <div class="acc" data-open="true">
+          <button type="button" class="acc-head" aria-expanded="true">
+            <span class="acc-title">Headline &amp; Tag</span>
+            <svg class="acc-chevron" width="14" height="14"><use href="#i-chevron"/></svg>
+          </button>
+          <div class="acc-body"><div class="acc-inner">
+            <textarea id="headline-edit" placeholder="Edit your headline..."></textarea>
+            <small class="helper-text">Wrap words in [brackets], (parens), or {braces} to highlight them.</small>
+            <h3 class="acc-subtitle">Tag Badge</h3>
+            <div class="preset-grid" id="tag-presets">
+              <button type="button" class="preset-btn active" data-tag="none"          title="No Tag">None</button>
+              <button type="button" class="preset-btn"        data-tag="trending"      title="Trending with icon">🔥 Trending</button>
+              <button type="button" class="preset-btn"        data-tag="trending-text" title="Trending text only">Trending</button>
+              <button type="button" class="preset-btn"        data-tag="breaking"      title="Breaking with icon">⚡ Breaking</button>
+              <button type="button" class="preset-btn"        data-tag="breaking-text" title="Breaking text only">Breaking</button>
+            </div>
+          </div></div>
+        </div>
+
+        <!-- Style: font + accent color -->
+        <div class="acc" data-open="false">
+          <button type="button" class="acc-head" aria-expanded="false">
+            <span class="acc-title">Style</span>
+            <svg class="acc-chevron" width="14" height="14"><use href="#i-chevron"/></svg>
+          </button>
+          <div class="acc-body"><div class="acc-inner">
+            <h3 class="acc-subtitle">Font Size</h3>
+            <label class="slider-container" style="margin-bottom:14px;">
+              <span class="slider-label">Size</span>
+              <input type="range" id="font-size" min="32" max="90" value="0" />
+            </label>
+            <h3 class="acc-subtitle">Accent Color</h3>
+            <label class="color-picker-wrap">
+              <div class="color-circle" style="border-color: #7900d9;">
+                <input type="color" id="accent-color" value="#7900d9" />
+              </div>
+              <span class="color-hex" id="accent-hex">#7900D9</span>
+            </label>
+          </div></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ═══ COL 2: Image / Background controls ═══ -->
+    <section class="glass-panel image-panel acc-list" id="image-panel" hidden>
+
+      <h2 class="panel-title">Image</h2>
+
+      <!-- Background image source -->
+      <div class="acc" data-open="true">
+        <button type="button" class="acc-head" aria-expanded="true">
+          <span class="acc-title">Background</span>
+          <svg class="acc-chevron" width="14" height="14"><use href="#i-chevron"/></svg>
+        </button>
+        <div class="acc-body"><div class="acc-inner">
+          <h3 class="acc-subtitle">Custom Upload</h3>
+          <label class="upload-zone">
+            <span class="upload-text">Drag &amp; drop or click</span>
+            <input type="file" id="bg-image-upload" accept="image/*" />
           </label>
-        </div>
-
-      </div>
-    </section>
-
-    <!-- ── COL 2: Background / Image ── -->
-    <section class="glass-panel image-panel" id="image-panel" hidden>
-
-      <h2 class="panel-title">Background</h2>
-
-      <div class="section" style="margin-top:0; padding-top:0; border-top:none;">
-        <span class="section-label">Custom Upload</span>
-        <label class="upload-zone">
-          <span class="upload-text">Drag &amp; drop or click</span>
-          <input type="file" id="bg-image-upload" accept="image/*" />
-        </label>
+          <div id="stock-images-section" class="acc-subgroup" hidden>
+            <h3 class="acc-subtitle">Stock Backgrounds</h3>
+            <div id="stock-images-grid" class="stock-grid"></div>
+          </div>
+        </div></div>
       </div>
 
-      <div id="stock-images-section" class="section" hidden>
-        <span class="section-label">Stock Backgrounds</span>
-        <div id="stock-images-grid" class="stock-grid"></div>
+      <!-- Adjustments -->
+      <div class="acc" data-open="false">
+        <button type="button" class="acc-head" aria-expanded="false">
+          <span class="acc-title">Adjustments</span>
+          <svg class="acc-chevron" width="14" height="14"><use href="#i-chevron"/></svg>
+        </button>
+        <div class="acc-body"><div class="acc-inner">
+          <label class="slider-container">
+            <span class="slider-label">Zoom</span>
+            <input type="range" id="img-zoom" min="10" max="300" value="100" />
+          </label>
+          <label class="slider-container">
+            <span class="slider-label">Pan X</span>
+            <input type="range" id="img-offset-x" min="-500" max="500" value="0" />
+          </label>
+          <label class="slider-container">
+            <span class="slider-label">Pan Y</span>
+            <input type="range" id="img-offset-y" min="-500" max="500" value="0" />
+          </label>
+          <label class="slider-container" style="margin-bottom:0;">
+            <span class="slider-label">Opacity</span>
+            <input type="range" id="overlay-opacity" min="0" max="100" value="100" />
+          </label>
+        </div></div>
       </div>
 
-      <div class="section">
-        <span class="section-label">Adjustments</span>
-        <label class="slider-container">
-          <span class="slider-label">Zoom</span>
-          <input type="range" id="img-zoom" min="10" max="300" value="100" />
-        </label>
-        <label class="slider-container">
-          <span class="slider-label">Pan X</span>
-          <input type="range" id="img-offset-x" min="-500" max="500" value="0" />
-        </label>
-        <label class="slider-container">
-          <span class="slider-label">Pan Y</span>
-          <input type="range" id="img-offset-y" min="-500" max="500" value="0" />
-        </label>
-        <label class="slider-container" style="margin-bottom:0;">
-          <span class="slider-label">Opacity</span>
-          <input type="range" id="overlay-opacity" min="0" max="100" value="100" />
-        </label>
-      </div>
-
-      <!-- Filters: one-tap presets + fine-tune sliders -->
-      <div class="section">
-        <span class="section-label">Filters</span>
-        <div class="preset-grid" id="filter-presets" style="margin-bottom:12px;">
-          <button type="button" class="preset-btn active" data-filter="none">None</button>
-          <button type="button" class="preset-btn" data-filter="vivid">Vivid</button>
-          <button type="button" class="preset-btn" data-filter="bw">B&amp;W</button>
-          <button type="button" class="preset-btn" data-filter="warm">Warm</button>
-          <button type="button" class="preset-btn" data-filter="cool">Cool</button>
-          <button type="button" class="preset-btn" data-filter="faded">Faded</button>
-          <button type="button" class="preset-btn" data-filter="soft">Soft</button>
-        </div>
-        <label class="slider-container">
-          <span class="slider-label">Bright</span>
-          <input type="range" id="filter-brightness" min="0" max="200" value="100" />
-        </label>
-        <label class="slider-container">
-          <span class="slider-label">Contrast</span>
-          <input type="range" id="filter-contrast" min="0" max="200" value="100" />
-        </label>
-        <label class="slider-container">
-          <span class="slider-label">Saturate</span>
-          <input type="range" id="filter-saturation" min="0" max="200" value="100" />
-        </label>
-        <label class="slider-container" style="margin-bottom:12px;">
-          <span class="slider-label">Blur</span>
-          <input type="range" id="filter-blur" min="0" max="20" value="0" />
-        </label>
-        <button type="button" id="img-reset-btn" class="btn-secondary">↺ Reset Image &amp; Filters</button>
+      <!-- Filters -->
+      <div class="acc" data-open="false">
+        <button type="button" class="acc-head" aria-expanded="false">
+          <span class="acc-title">Filters</span>
+          <span class="acc-meta" id="acc-meta-filter">None</span>
+          <svg class="acc-chevron" width="14" height="14"><use href="#i-chevron"/></svg>
+        </button>
+        <div class="acc-body"><div class="acc-inner">
+          <div class="preset-grid" id="filter-presets" style="margin-bottom:14px;">
+            <button type="button" class="preset-btn active" data-filter="none">None</button>
+            <button type="button" class="preset-btn" data-filter="vivid">Vivid</button>
+            <button type="button" class="preset-btn" data-filter="bw">B&amp;W</button>
+            <button type="button" class="preset-btn" data-filter="warm">Warm</button>
+            <button type="button" class="preset-btn" data-filter="cool">Cool</button>
+            <button type="button" class="preset-btn" data-filter="faded">Faded</button>
+            <button type="button" class="preset-btn" data-filter="soft">Soft</button>
+          </div>
+          <label class="slider-container">
+            <span class="slider-label">Bright</span>
+            <input type="range" id="filter-brightness" min="0" max="200" value="100" />
+          </label>
+          <label class="slider-container">
+            <span class="slider-label">Contrast</span>
+            <input type="range" id="filter-contrast" min="0" max="200" value="100" />
+          </label>
+          <label class="slider-container">
+            <span class="slider-label">Saturate</span>
+            <input type="range" id="filter-saturation" min="0" max="200" value="100" />
+          </label>
+          <label class="slider-container" style="margin-bottom:14px;">
+            <span class="slider-label">Blur</span>
+            <input type="range" id="filter-blur" min="0" max="20" value="0" />
+          </label>
+          <button type="button" id="img-reset-btn" class="btn-secondary">↺ Reset Image &amp; Filters</button>
+        </div></div>
       </div>
 
     </section>
 
-    <!-- ── COL 3: Preview + Download ── -->
+    <!-- ═══ COL 3: Live Preview ═══ -->
     <section class="glass-panel preview-panel">
       <div class="preview-header">
         <span class="preview-title">Live Preview</span>
@@ -213,7 +254,9 @@
         <canvas id="post-canvas" width="920" height="1700" aria-label="Generated Pix news post"></canvas>
       </div>
 
-      <div class="download-wrap">
+      <!-- On desktop this lives inline at the bottom of the preview panel.
+           On mobile, CSS turns it into a fixed bottom action bar. -->
+      <div class="download-wrap" id="action-bar">
         <button type="button" id="post-x-btn" class="btn-x">
           <span class="x-glyph">𝕏</span> Post to X
         </button>
