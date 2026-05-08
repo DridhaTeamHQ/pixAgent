@@ -433,6 +433,65 @@ textarea::placeholder {
   color: #c4b5fd;
 }
 
+/* ─── Aspect-ratio chips ──────────────────────────────────── */
+.ratio-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.ratio-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 4px 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: var(--transition);
+}
+
+.ratio-btn:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ratio-btn.active {
+  background: rgba(155, 114, 239, 0.13);
+  border-color: rgba(155, 114, 239, 0.55);
+  color: #c4b5fd;
+}
+
+.ratio-icon {
+  display: block;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  opacity: 0.9;
+}
+.ratio-icon[data-shape="9-16"]  { width: 11px; height: 18px; }
+.ratio-icon[data-shape="4-5"]   { width: 14px; height: 17px; }
+.ratio-icon[data-shape="1-1"]   { width: 16px; height: 16px; }
+.ratio-icon[data-shape="16-9"]  { width: 20px; height: 11px; }
+
+.ratio-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.ratio-sub {
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
 /* ─── Sliders ─────────────────────────────────────────────────── */
 .slider-container {
   display: grid;

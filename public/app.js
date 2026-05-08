@@ -30,9 +30,58 @@ const faceDetector =
     ? new FaceDetector({ fastMode: true, maxDetectedFaces: 1 })
     : null;
 
+/* ── Aspect-ratio layout presets ──
+   Each preset defines the canvas size + every key element's position so a
+   single render path can produce posters in different aspect ratios.
+   9:16 is the original Zeplin spec; the others are tuned to look right at
+   their respective dimensions. Tweak numbers per preset, not in renderPoster. */
+const LAYOUT_PRESETS = {
+  "9:16": {
+    label: "9:16",
+    sub:   "Story / Reel",
+    W: 920,  H: 1700,
+    logo:     { centerX: 810, centerY: 150, slotPix: 100, slotShortly: 112 },
+    headline: { x: 64, y: 1130, maxWidth: 920 - 128, defaultSize: 49 },
+    tag:      { x: 64, gapAboveHeadline: 16 },
+    gradient: { startY: 800, fullBlackY: 1150 },
+    showPreviewBars: true,
+  },
+  "4:5": {
+    label: "4:5",
+    sub:   "Feed Portrait",
+    W: 1080, H: 1350,
+    logo:     { centerX: 970, centerY: 130, slotPix: 92,  slotShortly: 104 },
+    headline: { x: 70, y: 880, maxWidth: 1080 - 140, defaultSize: 50 },
+    tag:      { x: 70, gapAboveHeadline: 14 },
+    gradient: { startY: 600, fullBlackY: 900 },
+    showPreviewBars: false,
+  },
+  "1:1": {
+    label: "1:1",
+    sub:   "Square",
+    W: 1080, H: 1080,
+    logo:     { centerX: 970, centerY: 120, slotPix: 90, slotShortly: 102 },
+    headline: { x: 70, y: 680, maxWidth: 1080 - 140, defaultSize: 48 },
+    tag:      { x: 70, gapAboveHeadline: 14 },
+    gradient: { startY: 460, fullBlackY: 700 },
+    showPreviewBars: false,
+  },
+  "16:9": {
+    label: "16:9",
+    sub:   "Wide",
+    W: 1920, H: 1080,
+    logo:     { centerX: 1810, centerY: 110, slotPix: 90, slotShortly: 102 },
+    headline: { x: 90, y: 740, maxWidth: 1920 - 180, defaultSize: 54 },
+    tag:      { x: 90, gapAboveHeadline: 14 },
+    gradient: { startY: 480, fullBlackY: 740 },
+    showPreviewBars: false,
+  },
+};
+
 /* ── State ── */
 
 const state = {
+  aspectRatio: "9:16",         // key into LAYOUT_PRESETS
   accent: "#7900d9",
   headline: "",
   mainImage: null,
@@ -53,6 +102,28 @@ const state = {
   tagImages: {},     // { trending: Image, breaking: Image }
   isDownloading: false
 };
+
+// Active layout preset (always read through this; never hard-code coords).
+function getLayout() {
+  return LAYOUT_PRESETS[state.aspectRatio] || LAYOUT_PRESETS["9:16"];
+}
+
+// Switch ratio: resize canvas, reset any pan that no longer makes sense, re-render.
+function applyAspectRatio(ratio) {
+  if (!LAYOUT_PRESETS[ratio]) return;
+  state.aspectRatio = ratio;
+  const L = LAYOUT_PRESETS[ratio];
+  canvas.width = L.W;
+  canvas.height = L.H;
+  // Reset image pan (positions vary too much across ratios to preserve)
+  state.imageOffset = { x: 0, y: 0 };
+  if (typeof imgOffsetX !== "undefined") imgOffsetX.value = 0;
+  if (typeof imgOffsetY !== "undefined") imgOffsetY.value = 0;
+  // Update the size badge in the preview header
+  const px = document.querySelector(".preview-pixels");
+  if (px) px.textContent = `${L.W} × ${L.H}`;
+  renderPoster();
+}
 
 /* ── Drag state (not part of poster state) ── */
 let isDragging = false;
@@ -450,6 +521,22 @@ tagPresetsContainer.addEventListener("click", (e) => {
   renderPoster();
 });
 
+// Aspect-ratio chips
+const ratioPresetsContainer = document.getElementById("ratio-presets");
+if (ratioPresetsContainer) {
+  ratioPresetsContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest(".ratio-btn");
+    if (!btn) return;
+    const ratio = btn.dataset.ratio;
+    if (!ratio || ratio === state.aspectRatio) return;
+    ratioPresetsContainer.querySelectorAll(".ratio-btn").forEach(b => {
+      b.classList.toggle("active", b === btn);
+      b.setAttribute("aria-checked", b === btn ? "true" : "false");
+    });
+    applyAspectRatio(ratio);
+  });
+}
+
 // Background image upload
 bgImageUpload.addEventListener("change", (e) => {
   const file = e.target.files?.[0];
@@ -693,8 +780,10 @@ function renderPoster() {
   drawTag();
   drawHeadline();
 
-  // Preview-only UI elements (not included in download)
-  if (!state.isDownloading) {
+  // Preview-only UI elements (not included in download).
+  // Only the 9:16 preset shows the Reels-style engagement + nav bars; on
+  // square / wide / 4:5 ratios these mockups don't make visual sense.
+  if (!state.isDownloading && getLayout().showPreviewBars) {
     drawEngagementBar();
     drawNavBar();
   }
@@ -719,19 +808,27 @@ function drawHero() {
   // Overlay opacity (0-100)
   const opa = (state.overlayOpacity ?? 100) / 100;
 
-  // Smooth gradient: starts at y=800, fully black by ~y=1150
-  // This matches the Zeplin reference where the fade is gradual through the mid-section
-  const gradientStart = 800;
-  const gradientHeight = canvas.height - gradientStart;  // 900px
+  // Smooth gradient — starts where the preset says, fades to fully black
+  // by `fullBlackY`, then stays black down to canvas.height. Each ratio has
+  // its own start/end so the headline always sits on a fully black band.
+  const L = getLayout();
+  const gradientStart = L.gradient.startY;
+  const gradientHeight = canvas.height - gradientStart;
+  const fullBlackFrac = (L.gradient.fullBlackY - gradientStart) / gradientHeight;
   const grad = ctx.createLinearGradient(0, gradientStart, 0, canvas.height);
-  grad.addColorStop(0, `rgba(0,0,0,0)`);
-  grad.addColorStop(0.12, `rgba(0,0,0,${(0.10 * opa).toFixed(2)})`);
-  grad.addColorStop(0.22, `rgba(0,0,0,${(0.30 * opa).toFixed(2)})`);
-  grad.addColorStop(0.30, `rgba(0,0,0,${(0.55 * opa).toFixed(2)})`);
-  grad.addColorStop(0.38, `rgba(0,0,0,${(0.80 * opa).toFixed(2)})`);
-  grad.addColorStop(0.44, `rgba(0,0,0,${(0.95 * opa).toFixed(2)})`);
-  grad.addColorStop(0.50, `rgba(0,0,0,${(1.00 * opa).toFixed(2)})`);
-  grad.addColorStop(1, `rgba(0,0,0,${(1.00 * opa).toFixed(2)})`);
+  // Stops are placed proportionally between gradientStart and fullBlackY.
+  // The original 9:16 stops (.12,.22,.30,.38,.44,.50 of 350px range) become:
+  //   t=0 → transparent, t=fullBlackFrac → fully black
+  const stop = (frac, alpha) =>
+    grad.addColorStop(Math.min(1, frac * fullBlackFrac), `rgba(0,0,0,${(alpha * opa).toFixed(2)})`);
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  stop(0.24, 0.10);
+  stop(0.44, 0.30);
+  stop(0.60, 0.55);
+  stop(0.76, 0.80);
+  stop(0.88, 0.95);
+  stop(1.00, 1.00);
+  grad.addColorStop(1, `rgba(0,0,0,${(1 * opa).toFixed(2)})`);
   ctx.fillStyle = grad;
   ctx.fillRect(0, gradientStart, canvas.width, gradientHeight);
 
@@ -792,15 +889,13 @@ function drawFixedLogos() {
   const logo = useAlt ? state.shortlyLogoImage : state.logoImage;
   if (!logo) return;
 
-  // The new Shortly PNG already includes its own circular gradient halo, so
-  // we draw it slightly smaller AND skip the white glow — both would compound
-  // into a clipped, blurry edge otherwise.
-  const slotSize = useAlt ? 112 : 100;
-
-  // Both logos share the same visual center (the original Pix slot's center).
-  // Original Pix slot: top-left (760, 100), 100×100 → center (810, 150).
-  const centerX = 810;
-  const centerY = 150;
+  // Position + size come from the active aspect-ratio preset. The Shortly
+  // logo already has its own gradient halo, so we use the slot size that's
+  // tuned for it (slightly larger), and skip the white glow.
+  const L = getLayout();
+  const slotSize = useAlt ? L.logo.slotShortly : L.logo.slotPix;
+  const centerX = L.logo.centerX;
+  const centerY = L.logo.centerY;
 
   const rawW = logo.naturalWidth  || logo.width  || 1;
   const rawH = logo.naturalHeight || logo.height || 1;
@@ -835,11 +930,13 @@ function drawTag() {
   const tagImg = state.tagImages[state.tag];
   if (!tagImg) return;
 
-  // Zeplin: tag at native SVG size (156×37 or 155×37), left at x=64
+  // Tag is anchored to the headline's top — sits at headline.y minus tag
+  // height minus a small gap. Both come from the active aspect-ratio preset.
+  const L = getLayout();
   const drawW = tagImg.naturalWidth || tagImg.width;
   const drawH = tagImg.naturalHeight || tagImg.height;
-  const tagX = 64;
-  const tagY = 1130 - drawH - 16;  // 16px gap above headline (Zeplin spec)
+  const tagX = L.tag.x;
+  const tagY = L.headline.y - drawH - L.tag.gapAboveHeadline;
 
   ctx.save();
   ctx.shadowColor = "rgba(0,0,0,0.3)";
@@ -851,15 +948,15 @@ function drawTag() {
 
 function drawHeadline() {
   const text = state.headline || "YOUR HEADLINE HERE";
-  // Zeplin: headline at x=64, max width = 920 - 64 - 64 = 792px
-  const maxTextWidth = canvas.width - 128;
+  // Position + width come from the active aspect-ratio preset.
+  const L = getLayout();
+  const maxTextWidth = L.headline.maxWidth;
   const layout = state.fontSize > 0
     ? buildHeadlineLayoutFixed(text, maxTextWidth, state.fontSize)
     : buildHeadlineLayout(text, maxTextWidth, 5);
-  const left = 64;
+  const left = L.headline.x;
   const blockHeight = layout.lines.length * layout.lineHeight;
-  // Zeplin: headline Y = 1130
-  const top = 1130;
+  const top = L.headline.y;
 
   const allWords = text.trim().split(/\s+/).filter(Boolean);
   const purpleCount = Math.ceil(allWords.length / 2);

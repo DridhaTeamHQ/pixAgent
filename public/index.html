@@ -68,6 +68,32 @@
       <div id="edit-panel" class="edit-panel" hidden>
 
         <div class="section" style="margin-top:22px;">
+          <span class="section-label">Aspect Ratio</span>
+          <div class="ratio-grid" id="ratio-presets" role="radiogroup" aria-label="Aspect ratio">
+            <button type="button" class="ratio-btn active" data-ratio="9:16" role="radio" aria-checked="true">
+              <span class="ratio-icon" data-shape="9-16"></span>
+              <span class="ratio-label">9:16</span>
+              <span class="ratio-sub">Story</span>
+            </button>
+            <button type="button" class="ratio-btn" data-ratio="4:5" role="radio" aria-checked="false">
+              <span class="ratio-icon" data-shape="4-5"></span>
+              <span class="ratio-label">4:5</span>
+              <span class="ratio-sub">Feed</span>
+            </button>
+            <button type="button" class="ratio-btn" data-ratio="1:1" role="radio" aria-checked="false">
+              <span class="ratio-icon" data-shape="1-1"></span>
+              <span class="ratio-label">1:1</span>
+              <span class="ratio-sub">Square</span>
+            </button>
+            <button type="button" class="ratio-btn" data-ratio="16:9" role="radio" aria-checked="false">
+              <span class="ratio-icon" data-shape="16-9"></span>
+              <span class="ratio-label">16:9</span>
+              <span class="ratio-sub">Wide</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="section">
           <span class="section-label">Headline</span>
           <textarea id="headline-edit" placeholder="Edit your headline..."></textarea>
           <small class="helper-text">Wrap words in [brackets] to highlight them.</small>
@@ -150,7 +176,7 @@
     <section class="glass-panel preview-panel">
       <div class="preview-header">
         <span class="preview-title">Live Preview</span>
-        <span class="preview-pixels">920 × 1700</span>
+        <span class="preview-pixels" id="preview-pixels">920 × 1700</span>
       </div>
 
       <div class="canvas-container">
