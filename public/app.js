@@ -1,7 +1,46 @@
 /* ── Pix Post Builder — Scrape + Edit ── */
 
 const canvas = document.getElementById("post-canvas");
-const ctx = canvas.getContext("2d");
+// `ctx` is `let` (not const) so renderToHighResCanvas() can temporarily swap
+// it to an offscreen 2× context for export, without rewriting every draw
+// function to take a ctx parameter.
+let ctx = canvas.getContext("2d");
+const screenCtx = ctx;   // permanent reference to the on-screen context
+
+// Export supersampling factor. 2× gives 4K-class output for 16:9 (3840×2160)
+// and 4K-tall for 9:16 (1840×3400), at the cost of larger PNG file size
+// (~3× vs design-size). Bumping to 3 quadruples filesize for marginal gain.
+const EXPORT_SCALE = 2;
+
+/**
+ * Render the poster onto an offscreen canvas at `scale`× the design size and
+ * return that canvas. Used for exporting at higher resolution than the live
+ * preview (Download, Post-to-X). All draw functions read `canvas.width` and
+ * `canvas.height` for layout — those stay at design size, while the export
+ * ctx is scaled, so pixels come out at scale× density without changing a
+ * single coordinate in the renderer.
+ */
+function renderToHighResCanvas(scale = 2) {
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width  = canvas.width  * scale;
+  exportCanvas.height = canvas.height * scale;
+  const exportCtx = exportCanvas.getContext("2d");
+  // High-quality image scaling for any upscale during cover-image draw
+  exportCtx.imageSmoothingEnabled = true;
+  exportCtx.imageSmoothingQuality = "high";
+  exportCtx.scale(scale, scale);
+
+  // Swap the module-level ctx → all draw calls inside renderPoster() now
+  // target the offscreen canvas. Restore immediately after.
+  const previous = ctx;
+  ctx = exportCtx;
+  try {
+    renderPoster();
+  } finally {
+    ctx = previous;
+  }
+  return exportCanvas;
+}
 
 const scrapeForm = document.getElementById("scrape-form");
 const scrapeUrlInput = document.getElementById("scrape-url");
@@ -385,18 +424,23 @@ postXBtn.addEventListener("click", () => {
   postXBtn.disabled = true;
   setPostStatus("Generating caption with AI…");
 
-  // Render clean export with the SHORTLY logo (only for the X-bound PNG)
+  // Flag for clean export with the Shortly logo. Screen canvas is left
+  // alone — the export happens on a 2× offscreen canvas via
+  // renderToHighResCanvas, then we restore state and re-render screen.
   state.isDownloading = true;
   state.useShortlyLogo = true;
-  renderPoster();
 
   // Two parallel async operations:
-  //   1. Render canvas → cropped blob (fast, ~50ms)
+  //   1. Render at high res → cropped blob (~80ms)
   //   2. Call OpenAI for an AI-written caption + hashtags (~1–2s)
   const blobPromise = new Promise((resolve) => {
-    // Crop the trailing black gradient gap before exporting so the X feed
-    // doesn't show a tall band of black under the headline.
-    const cropped = exportCanvasCroppedToContent(canvas, { paddingBelow: 36, minHeight: 1100 });
+    const exportCanvas = renderToHighResCanvas(EXPORT_SCALE);
+    // Crop the trailing black gradient gap. Padding/minHeight scale with
+    // EXPORT_SCALE because the high-res canvas is in scaled pixel space.
+    const cropped = exportCanvasCroppedToContent(exportCanvas, {
+      paddingBelow: 36   * EXPORT_SCALE,
+      minHeight:    1100 * EXPORT_SCALE,
+    });
     cropped.toBlob((b) => {
       // Restore preview state: Pix logo + overlays back on
       state.isDownloading = false;
@@ -471,12 +515,17 @@ postXBtn.addEventListener("click", () => {
 });
 
 downloadButton.addEventListener("click", () => {
-  // Render WITHOUT UI overlays for clean export
+  // Flag for clean export (no preview overlays). We DO NOT re-render the
+  // screen canvas — the export happens entirely on a 2× offscreen canvas
+  // via renderToHighResCanvas, then we restore state and re-render screen.
   state.isDownloading = true;
-  renderPoster();
 
-  // Use toBlob instead of toDataURL to prevent browser limits on large base64 strings which can downgrade quality
-  canvas.toBlob((blob) => {
+  const exportCanvas = renderToHighResCanvas(EXPORT_SCALE);
+
+  exportCanvas.toBlob((blob) => {
+    state.isDownloading = false;
+    renderPoster();  // Restore preview
+
     if (!blob) {
       setStatus("Failed to generate high-quality export.", "error");
       return;
@@ -486,13 +535,7 @@ downloadButton.addEventListener("click", () => {
     link.href = url;
     link.download = `${slugify(state.headline || "pix-post")}.png`;
     link.click();
-
-    // Cleanup URL immediately to save memory
     setTimeout(() => URL.revokeObjectURL(url), 100);
-
-    // Re-render WITH overlays for preview
-    state.isDownloading = false;
-    renderPoster();
   }, "image/png");
 });
 
