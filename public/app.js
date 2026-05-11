@@ -74,21 +74,25 @@ const faceDetector =
    single render path can produce posters in different aspect ratios.
    9:16 is the original Zeplin spec; the others are tuned to look right at
    their respective dimensions. Tweak numbers per preset, not in renderPoster. */
-/* Each preset is tuned so the headline:
-   - sits at ~63–66% of the canvas height (consistent vertical anchor)
-   - wraps to roughly 3 lines for a typical 12–18 word headline
-   - has a font size that gives comparable visual weight at the canvas
-     scale (smaller canvas → smaller font, wider canvas → bigger font)
-   - sits on a fully-black gradient band (gradient.fullBlackY === headline.y) */
+/* Each preset's `headline.bottomPadding` is the gap (px) between the bottom
+   of the LAST headline line and the canvas bottom. The headline's actual y
+   position is computed at render time from:
+       top = canvas.height - bottomPadding - blockHeight
+   so the headline always anchors to the bottom of the canvas no matter how
+   many lines it wraps to. The gradient.fadeHeight defines how tall the
+   transparent→black fade is above the headline. */
 const LAYOUT_PRESETS = {
   "9:16": {
     label: "9:16",
     sub:   "Story / Reel",
     W: 920,  H: 1700,
     logo:     { centerX: 810, centerY: 150, slotPix: 100, slotShortly: 112 },
-    headline: { x: 64, y: 1130, maxWidth: 920 - 128, defaultSize: 49 },
+    /* 9:16 keeps a big bottomPadding (~400 px) because the preview
+       engagement + nav bars occupy that band, and Stories/Reels platforms
+       overlay their own UI in that zone in the published feed. */
+    headline: { x: 64, bottomPadding: 400, maxWidth: 920 - 128, defaultSize: 49 },
     tag:      { x: 64, gapAboveHeadline: 16 },
-    gradient: { startY: 800, fullBlackY: 1130 },
+    gradient: { fadeHeight: 330 },
     showPreviewBars: true,
   },
   "4:5": {
@@ -96,9 +100,9 @@ const LAYOUT_PRESETS = {
     sub:   "Feed Portrait",
     W: 1080, H: 1350,
     logo:     { centerX: 970, centerY: 130, slotPix: 92,  slotShortly: 104 },
-    headline: { x: 70, y: 860, maxWidth: 1080 - 140, defaultSize: 52 },
+    headline: { x: 70, bottomPadding: 110, maxWidth: 1080 - 140, defaultSize: 52 },
     tag:      { x: 70, gapAboveHeadline: 14 },
-    gradient: { startY: 580, fullBlackY: 860 },
+    gradient: { fadeHeight: 300 },
     showPreviewBars: false,
   },
   "1:1": {
@@ -106,9 +110,9 @@ const LAYOUT_PRESETS = {
     sub:   "Square",
     W: 1080, H: 1080,
     logo:     { centerX: 970, centerY: 120, slotPix: 90, slotShortly: 102 },
-    headline: { x: 70, y: 640, maxWidth: 1080 - 140, defaultSize: 50 },
+    headline: { x: 70, bottomPadding: 90, maxWidth: 1080 - 140, defaultSize: 50 },
     tag:      { x: 70, gapAboveHeadline: 14 },
-    gradient: { startY: 360, fullBlackY: 640 },
+    gradient: { fadeHeight: 280 },
     showPreviewBars: false,
   },
   "16:9": {
@@ -118,9 +122,9 @@ const LAYOUT_PRESETS = {
     logo:     { centerX: 1810, centerY: 110, slotPix: 90, slotShortly: 102 },
     /* Tighter maxWidth + bigger font so the headline wraps to ~3 lines
        and reads with the same prominence as the portrait presets. */
-    headline: { x: 90, y: 680, maxWidth: 1200, defaultSize: 64 },
+    headline: { x: 90, bottomPadding: 100, maxWidth: 1200, defaultSize: 64 },
     tag:      { x: 90, gapAboveHeadline: 14 },
-    gradient: { startY: 380, fullBlackY: 680 },
+    gradient: { fadeHeight: 300 },
     showPreviewBars: false,
   },
 };
@@ -1099,10 +1103,35 @@ async function fetchStockImages(headline) {
 
 /* ── Poster Rendering ── */
 
+// Compute the headline layout (lines + font) AND its top y position based on
+// canvas.height - bottomPadding. Done once per render and stashed on state
+// so drawBackground / drawTag / drawHeadline all use the same anchor.
+function computeHeadlineLayoutAndTop() {
+  const L = getLayout();
+  const text = state.headline || "YOUR HEADLINE HERE";
+  const layout = state.fontSize > 0
+    ? buildHeadlineLayoutFixed(text, L.headline.maxWidth, state.fontSize)
+    : buildHeadlineLayout(text, L.headline.maxWidth, 5);
+
+  // Pull the actual font size out of the font string so the block height
+  // doesn't depend on layout.lineHeight (which has line-spacing baked in)
+  const m = layout.font.match(/(\d+(?:\.\d+)?)px/);
+  const fontSize = m ? parseFloat(m[1]) : 49;
+
+  const blockHeight = (layout.lines.length - 1) * layout.lineHeight + fontSize;
+  const top = Math.max(0, canvas.height - L.headline.bottomPadding - blockHeight);
+  return { layout, top, fontSize, blockHeight };
+}
+
 function renderPoster() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
+
+  // Compute headline layout + bottom-anchored top ONCE for this render and
+  // share via state._render so drawBackground / drawTag / drawHeadline don't
+  // each have to recompute the same thing.
+  state._render = computeHeadlineLayoutAndTop();
 
   drawBackground();
   drawHero();
@@ -1137,13 +1166,16 @@ function drawHero() {
   // Overlay opacity (0-100)
   const opa = (state.overlayOpacity ?? 100) / 100;
 
-  // Smooth gradient — starts where the preset says, fades to fully black
-  // by `fullBlackY`, then stays black down to canvas.height. Each ratio has
-  // its own start/end so the headline always sits on a fully black band.
+  // Smooth gradient — starts `fadeHeight` px above the headline top and
+  // fades to fully black BY the headline top, then stays black down to
+  // canvas.height. headline top is computed dynamically from line count,
+  // so the gradient automatically follows long vs short headlines.
   const L = getLayout();
-  const gradientStart = L.gradient.startY;
+  const headlineTop = state._render?.top ?? (canvas.height - L.headline.bottomPadding - 200);
+  const fullBlackY = headlineTop;
+  const gradientStart = Math.max(0, fullBlackY - L.gradient.fadeHeight);
   const gradientHeight = canvas.height - gradientStart;
-  const fullBlackFrac = (L.gradient.fullBlackY - gradientStart) / gradientHeight;
+  const fullBlackFrac = (fullBlackY - gradientStart) / gradientHeight;
   const grad = ctx.createLinearGradient(0, gradientStart, 0, canvas.height);
   // Stops are placed proportionally between gradientStart and fullBlackY.
   // The original 9:16 stops (.12,.22,.30,.38,.44,.50 of 350px range) become:
@@ -1259,13 +1291,14 @@ function drawTag() {
   const tagImg = state.tagImages[state.tag];
   if (!tagImg) return;
 
-  // Tag is anchored to the headline's top — sits at headline.y minus tag
-  // height minus a small gap. Both come from the active aspect-ratio preset.
+  // Tag is anchored to the dynamic headline top, so it always sits just
+  // above the headline regardless of how many lines the headline wrapped to.
   const L = getLayout();
   const drawW = tagImg.naturalWidth || tagImg.width;
   const drawH = tagImg.naturalHeight || tagImg.height;
   const tagX = L.tag.x;
-  const tagY = L.headline.y - drawH - L.tag.gapAboveHeadline;
+  const headlineTop = state._render?.top ?? (canvas.height - L.headline.bottomPadding - 200);
+  const tagY = headlineTop - drawH - L.tag.gapAboveHeadline;
 
   ctx.save();
   ctx.shadowColor = "rgba(0,0,0,0.3)";
@@ -1276,16 +1309,15 @@ function drawTag() {
 }
 
 function drawHeadline() {
-  const text = state.headline || "YOUR HEADLINE HERE";
-  // Position + width come from the active aspect-ratio preset.
+  // Use the layout + top that renderPoster already computed and cached, so
+  // text, gradient, and tag stay in sync. Fall back gracefully if state
+  // isn't initialized yet (e.g. very first paint).
   const L = getLayout();
-  const maxTextWidth = L.headline.maxWidth;
-  const layout = state.fontSize > 0
-    ? buildHeadlineLayoutFixed(text, maxTextWidth, state.fontSize)
-    : buildHeadlineLayout(text, maxTextWidth, 5);
+  const cached = state._render || computeHeadlineLayoutAndTop();
+  const { layout, top } = cached;
+  const text = state.headline || "YOUR HEADLINE HERE";
   const left = L.headline.x;
   const blockHeight = layout.lines.length * layout.lineHeight;
-  const top = L.headline.y;
 
   const allWords = text.trim().split(/\s+/).filter(Boolean);
   const purpleCount = Math.ceil(allWords.length / 2);
