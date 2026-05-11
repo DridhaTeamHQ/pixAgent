@@ -74,6 +74,12 @@ const faceDetector =
    single render path can produce posters in different aspect ratios.
    9:16 is the original Zeplin spec; the others are tuned to look right at
    their respective dimensions. Tweak numbers per preset, not in renderPoster. */
+/* Each preset is tuned so the headline:
+   - sits at ~63–66% of the canvas height (consistent vertical anchor)
+   - wraps to roughly 3 lines for a typical 12–18 word headline
+   - has a font size that gives comparable visual weight at the canvas
+     scale (smaller canvas → smaller font, wider canvas → bigger font)
+   - sits on a fully-black gradient band (gradient.fullBlackY === headline.y) */
 const LAYOUT_PRESETS = {
   "9:16": {
     label: "9:16",
@@ -82,7 +88,7 @@ const LAYOUT_PRESETS = {
     logo:     { centerX: 810, centerY: 150, slotPix: 100, slotShortly: 112 },
     headline: { x: 64, y: 1130, maxWidth: 920 - 128, defaultSize: 49 },
     tag:      { x: 64, gapAboveHeadline: 16 },
-    gradient: { startY: 800, fullBlackY: 1150 },
+    gradient: { startY: 800, fullBlackY: 1130 },
     showPreviewBars: true,
   },
   "4:5": {
@@ -90,9 +96,9 @@ const LAYOUT_PRESETS = {
     sub:   "Feed Portrait",
     W: 1080, H: 1350,
     logo:     { centerX: 970, centerY: 130, slotPix: 92,  slotShortly: 104 },
-    headline: { x: 70, y: 880, maxWidth: 1080 - 140, defaultSize: 50 },
+    headline: { x: 70, y: 860, maxWidth: 1080 - 140, defaultSize: 52 },
     tag:      { x: 70, gapAboveHeadline: 14 },
-    gradient: { startY: 600, fullBlackY: 900 },
+    gradient: { startY: 580, fullBlackY: 860 },
     showPreviewBars: false,
   },
   "1:1": {
@@ -100,9 +106,9 @@ const LAYOUT_PRESETS = {
     sub:   "Square",
     W: 1080, H: 1080,
     logo:     { centerX: 970, centerY: 120, slotPix: 90, slotShortly: 102 },
-    headline: { x: 70, y: 680, maxWidth: 1080 - 140, defaultSize: 48 },
+    headline: { x: 70, y: 640, maxWidth: 1080 - 140, defaultSize: 50 },
     tag:      { x: 70, gapAboveHeadline: 14 },
-    gradient: { startY: 460, fullBlackY: 700 },
+    gradient: { startY: 360, fullBlackY: 640 },
     showPreviewBars: false,
   },
   "16:9": {
@@ -110,9 +116,11 @@ const LAYOUT_PRESETS = {
     sub:   "Wide",
     W: 1920, H: 1080,
     logo:     { centerX: 1810, centerY: 110, slotPix: 90, slotShortly: 102 },
-    headline: { x: 90, y: 740, maxWidth: 1920 - 180, defaultSize: 54 },
+    /* Tighter maxWidth + bigger font so the headline wraps to ~3 lines
+       and reads with the same prominence as the portrait presets. */
+    headline: { x: 90, y: 680, maxWidth: 1200, defaultSize: 64 },
     tag:      { x: 90, gapAboveHeadline: 14 },
-    gradient: { startY: 480, fullBlackY: 740 },
+    gradient: { startY: 380, fullBlackY: 680 },
     showPreviewBars: false,
   },
 };
