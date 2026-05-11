@@ -1336,19 +1336,26 @@ function drawHeadline() {
     });
 
     ctx.fillStyle = state.accent;
-    const PADDING = 8;
+
+    // Pull the actual font size out of the font string (e.g. "600 49px ...")
+    // so the highlight box hugs the glyph height, not the line-height. Using
+    // lineHeight made the box too tall and bled into the next line's bbox.
+    const fontMatch = layout.font.match(/(\d+(?:\.\d+)?)px/);
+    const fontSize  = fontMatch ? parseFloat(fontMatch[1]) : Math.round(layout.lineHeight / 1.22);
+
+    const PAD_X        = Math.max(6, Math.round(fontSize * 0.16));  // horizontal breathing room
+    const OVERSHOOT_T  = Math.max(2, Math.round(fontSize * 0.06));  // box top above cap line
+    const BOX_HEIGHT   = Math.round(fontSize * 0.94);                // hugs glyph height
+    const CORNER_RAD   = Math.max(6, Math.round(fontSize * 0.18));
 
     segments.forEach(seg => {
-      const drawX = seg.x - PADDING;
-      const widthToFill = seg.w + PADDING * 2;
-
-      const drawY = y + 4;
-      const drawH = layout.lineHeight - 6; // Creates a vertical gap between lines
-      const radius = 8; // Soft rounded corners
+      const drawX = seg.x - PAD_X;
+      const widthToFill = seg.w + PAD_X * 2;
+      const drawY = y - OVERSHOOT_T;
+      const drawH = BOX_HEIGHT;
 
       ctx.beginPath();
-      // Use standard roundRect
-      ctx.roundRect(drawX, drawY, widthToFill, drawH, radius);
+      ctx.roundRect(drawX, drawY, widthToFill, drawH, CORNER_RAD);
       ctx.fill();
     });
   });
