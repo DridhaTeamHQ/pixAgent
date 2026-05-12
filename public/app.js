@@ -152,6 +152,7 @@ const state = {
   tag: "none",       // "none" | "trending" | "breaking"
   tagImages: {},     // { trending: Image, breaking: Image }
   isDownloading: false,
+  imageSelectionNonce: 0,
 
   /* ── Image filters (CSS-style values applied via ctx.filter) ── */
   filterBrightness: 100,    // 0–200 (100 = neutral)
@@ -307,6 +308,11 @@ function resetImageControls() {
   imgOffsetX.value = 0;
   imgOffsetY.value = 0;
   imgZoom.value = 100;
+}
+
+function claimImageSelection() {
+  state.imageSelectionNonce += 1;
+  return state.imageSelectionNonce;
 }
 
 function buildFallbackImageSuggestions(searchQuery, count = 6) {
@@ -986,19 +992,20 @@ window.addEventListener("resize", () => {
 bgImageUpload.addEventListener("change", (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
+  const uploadNonce = claimImageSelection();
   const reader = new FileReader();
   reader.onload = async (ev) => {
     const img = new Image();
     img.onload = async () => {
+      if (state.imageSelectionNonce !== uploadNonce) return;
       await ensureImageFocalPoint(img);
       state.mainImage = img;
-      state.imageOffset = { x: 0, y: 0 };
-      imgOffsetX.value = 0;
-      imgOffsetY.value = 0;
+      resetImageControls();
       editPanel.hidden = false;
       imagePanel.hidden = false;
       renderPoster();
       setStatus("Custom image loaded!", "success");
+      bgImageUpload.value = "";
     };
     img.src = ev.target.result;
   };
@@ -1139,6 +1146,7 @@ async function runScrape() {
 
 async function fetchStockImages(headline, options = {}) {
   const { autoApplyFirst = false, onStatus = null } = options;
+  const selectionNonceAtStart = state.imageSelectionNonce;
   const report = (message, type) => {
     if (typeof onStatus === "function") onStatus(message, type);
   };
@@ -1191,12 +1199,19 @@ async function fetchStockImages(headline, options = {}) {
     }
 
     stockImagesGrid.innerHTML = "";
-    const applySuggestedImage = async (img, thumb = null) => {
+    const applySuggestedImage = async (img, thumb = null, expectedNonce = null) => {
+      if (expectedNonce !== null && state.imageSelectionNonce !== expectedNonce) {
+        return false;
+      }
       report("Loading selected image...");
       setStatus("Loading image...");
       try {
         const fullImg = await imageFromUrl(img.imageProxy);
+        if (expectedNonce !== null && state.imageSelectionNonce !== expectedNonce) {
+          return false;
+        }
         await ensureImageFocalPoint(fullImg);
+        claimImageSelection();
         state.mainImage = fullImg;
         resetImageControls();
         renderPoster();
@@ -1226,8 +1241,8 @@ async function fetchStockImages(headline, options = {}) {
     stockImagesSection.hidden = false;
     report(`Found ${images.length} matching image${images.length === 1 ? "" : "s"}.`, "success");
 
-    if (autoApplyFirst && images[0]) {
-      const applied = await applySuggestedImage(images[0], thumbs[0]);
+    if (autoApplyFirst && images[0] && state.imageSelectionNonce === selectionNonceAtStart) {
+      const applied = await applySuggestedImage(images[0], thumbs[0], selectionNonceAtStart);
       if (applied) {
         report(`Poster ready with a matching image. ${images.length > 1 ? "Tap another thumbnail to change it." : ""}`.trim(), "success");
       }
