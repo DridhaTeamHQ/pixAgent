@@ -276,6 +276,7 @@ const modeTabs = document.getElementById("mode-tabs");
 const writeForm = document.getElementById("write-form");
 const writeHeadline = document.getElementById("write-headline");
 const writeApplyBtn = document.getElementById("write-apply-btn");
+const writeStatus = document.getElementById("write-status");
 
 modeTabs.addEventListener("click", (e) => {
   const tab = e.target.closest(".mode-tab");
@@ -293,8 +294,87 @@ modeTabs.addEventListener("click", (e) => {
   }
 });
 
+function setWriteStatus(message, type) {
+  if (!writeStatus) return;
+  writeStatus.textContent = message || "";
+  writeStatus.className = "status-text";
+  if (type) writeStatus.classList.add(type);
+}
+
+function resetImageControls() {
+  state.imageOffset = { x: 0, y: 0 };
+  state.imageZoom = 100;
+  imgOffsetX.value = 0;
+  imgOffsetY.value = 0;
+  imgZoom.value = 100;
+}
+
+function buildFallbackImageSuggestions(searchQuery, count = 6) {
+  const words = searchQuery
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 4);
+  const label = (words.join(" ") || "news").toUpperCase();
+  const palettes = [
+    ["#0f172a", "#7c3aed", "#22d3ee"],
+    ["#111827", "#ef4444", "#f59e0b"],
+    ["#082f49", "#14b8a6", "#eab308"],
+    ["#18181b", "#e11d48", "#a3e635"],
+    ["#1e1b4b", "#2563eb", "#f97316"],
+    ["#052e16", "#16a34a", "#38bdf8"],
+  ];
+
+  return Array.from({ length: count }, (_, index) => {
+    const [base, accent, glow] = palettes[index % palettes.length];
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800" viewBox="0 0 1200 1800">
+        <defs>
+          <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="${base}"/>
+            <stop offset="58%" stop-color="#050505"/>
+            <stop offset="100%" stop-color="${accent}"/>
+          </linearGradient>
+          <radialGradient id="g1" cx="${20 + index * 11}%" cy="${18 + index * 7}%" r="58%">
+            <stop offset="0%" stop-color="${glow}" stop-opacity="0.72"/>
+            <stop offset="100%" stop-color="${glow}" stop-opacity="0"/>
+          </radialGradient>
+          <filter id="blur"><feGaussianBlur stdDeviation="36"/></filter>
+        </defs>
+        <rect width="1200" height="1800" fill="url(#bg)"/>
+        <circle cx="${260 + index * 120}" cy="${260 + index * 95}" r="360" fill="url(#g1)" filter="url(#blur)"/>
+        <circle cx="${940 - index * 70}" cy="${1120 + index * 46}" r="420" fill="${accent}" opacity="0.22" filter="url(#blur)"/>
+        <g opacity="0.22" stroke="#fff" stroke-width="2">
+          ${Array.from({ length: 18 }, (_, line) => `<path d="M${line * 84 - 220} 0 L${line * 84 + 520} 1800"/>`).join("")}
+        </g>
+        <text x="88" y="220" fill="#fff" opacity="0.22" font-family="Arial, sans-serif" font-size="64" font-weight="800">${escapeSvgText(label)}</text>
+      </svg>
+    `;
+    const imageUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    return {
+      id: `fallback-${index + 1}`,
+      alt: `${searchQuery} related image`,
+      preview: imageUrl,
+      image: imageUrl,
+      imageProxy: imageUrl,
+      source: "fallback",
+    };
+  });
+}
+
+function escapeSvgText(value) {
+  return value.replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&apos;",
+  }[ch]));
+}
+
 // Write mode — build poster from manual text
-writeApplyBtn.addEventListener("click", () => {
+writeApplyBtn.addEventListener("click", async () => {
   const text = writeHeadline.value.trim();
   if (!text) return;
   state.headline = text;
@@ -304,12 +384,21 @@ writeApplyBtn.addEventListener("click", () => {
   renderPoster();
   scrollPreviewIntoViewIfMobile();
   closeSheetIfMobile();
+
+  writeApplyBtn.disabled = true;
+  setWriteStatus("Finding matching images...");
+  await fetchStockImages(text, {
+    autoApplyFirst: true,
+    onStatus: setWriteStatus,
+  });
+  writeApplyBtn.disabled = false;
 });
 
 // Live sync: write-headline → headline-edit → poster
 writeHeadline.addEventListener("input", () => {
   state.headline = writeHeadline.value;
   headlineEdit.value = writeHeadline.value;
+  setWriteStatus("");
   renderPoster();
 });
 
@@ -426,6 +515,27 @@ async function fetchAiCaption(headline, timeoutMs = 12000) {
   }
 }
 
+function isLikelyMobileDevice() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "")
+    || (navigator.maxTouchPoints > 1 && window.matchMedia("(max-width: 900px)").matches);
+}
+
+function openXComposer(caption) {
+  const encoded = encodeURIComponent(caption);
+  const intentUrl = `https://x.com/intent/post?text=${encoded}`;
+
+  if (!isLikelyMobileDevice()) {
+    return { intentUrl, opened: !!window.open(intentUrl, "_blank", "noopener,noreferrer"), usedAppLink: false };
+  }
+
+  window.location.href = `twitter://post?message=${encoded}`;
+  window.setTimeout(() => {
+    window.open(intentUrl, "_blank", "noopener,noreferrer");
+  }, 900);
+
+  return { intentUrl, opened: true, usedAppLink: true };
+}
+
 postXBtn.addEventListener("click", () => {
   const headline = (state.headline || "").trim();
   if (!headline) {
@@ -498,8 +608,7 @@ postXBtn.addEventListener("click", () => {
     // 3) Wait for AI caption (already in flight), then open X with it
     setPostStatus("Opening X…");
     const { caption, source, error } = await captionPromise;
-    const intentUrl = `https://x.com/intent/post?text=${encodeURIComponent(caption)}`;
-    const win = window.open(intentUrl, "_blank", "noopener,noreferrer");
+    const { intentUrl, opened, usedAppLink } = openXComposer(caption);
 
     // 4) Status — surface AI failures clearly so we can debug
     postXStatus.textContent = "";
@@ -507,15 +616,19 @@ postXBtn.addEventListener("click", () => {
       postXStatus.className = "status-text success";
       postXStatus.append(
         clipboardOk
-          ? "✓ Caption ready, image copied + downloaded — Ctrl+V on the X tab."
-          : "✓ Caption ready, image downloaded — attach it on the X tab."
+          ? (usedAppLink
+            ? "✓ Caption ready, opening X app. Image copied + downloaded; paste or attach it in X."
+            : "✓ Caption ready, image copied + downloaded — Ctrl+V on the X tab.")
+          : (usedAppLink
+            ? "✓ Caption ready, opening X app. Image downloaded; attach it in X."
+            : "✓ Caption ready, image downloaded — attach it on the X tab.")
       );
     } else {
       // AI failed — make it visible
       postXStatus.className = "status-text error";
       postXStatus.append(`⚠ AI caption failed (${error || "unknown"}) — used raw headline. `);
     }
-    if (!win) {
+    if (!opened) {
       const a = document.createElement("a");
       a.href = intentUrl; a.target = "_blank"; a.rel = "noopener";
       a.textContent = "Open X →";
@@ -1024,7 +1137,12 @@ async function runScrape() {
   }
 }
 
-async function fetchStockImages(headline) {
+async function fetchStockImages(headline, options = {}) {
+  const { autoApplyFirst = false, onStatus = null } = options;
+  const report = (message, type) => {
+    if (typeof onStatus === "function") onStatus(message, type);
+  };
+
   try {
     // 1. Extract proper search keywords from the headline instead of passing a long sentence
     const STOP = new Set(["THE", "A", "AN", "AND", "OR", "BUT", "FOR", "WITH", "FROM", "THAT", "THIS",
@@ -1063,41 +1181,60 @@ async function fetchStockImages(headline) {
     }
 
     if (!images.length) {
+      images = buildFallbackImageSuggestions(searchQuery);
+    }
+
+    if (!images.length) {
       stockImagesSection.hidden = true;
+      report("No matching images found. You can upload one manually.", "error");
       return;
     }
 
     stockImagesGrid.innerHTML = "";
+    const applySuggestedImage = async (img, thumb = null) => {
+      report("Loading selected image...");
+      setStatus("Loading image...");
+      try {
+        const fullImg = await imageFromUrl(img.imageProxy);
+        await ensureImageFocalPoint(fullImg);
+        state.mainImage = fullImg;
+        resetImageControls();
+        renderPoster();
+        report("Image applied.", "success");
+        setStatus("Image applied!", "success");
+        stockImagesGrid.querySelectorAll(".stock-item").forEach(t => t.classList.remove("active"));
+        if (thumb) thumb.classList.add("active");
+        return true;
+      } catch {
+        report("Failed to load that image.", "error");
+        setStatus("Failed to load image.", "error");
+        return false;
+      }
+    };
+
+    const thumbs = [];
     images.forEach(img => {
       const thumb = document.createElement("div");
       thumb.className = "stock-item";
       thumb.style.backgroundImage = `url(${img.preview})`;
       thumb.title = img.alt || "Related image";
-      thumb.addEventListener("click", async () => {
-        setStatus("Loading image...");
-        try {
-          const fullImg = await imageFromUrl(img.imageProxy);
-          await ensureImageFocalPoint(fullImg);
-          state.mainImage = fullImg;
-          state.imageOffset = { x: 0, y: 0 };
-          state.imageZoom = 100;
-          imgOffsetX.value = 0;
-          imgOffsetY.value = 0;
-          imgZoom.value = 100;
-          renderPoster();
-          setStatus("Image applied!", "success");
-          stockImagesGrid.querySelectorAll(".stock-item").forEach(t => t.classList.remove("active"));
-          thumb.classList.add("active");
-        } catch {
-          setStatus("Failed to load image.", "error");
-        }
-      });
+      thumb.addEventListener("click", () => applySuggestedImage(img, thumb));
       stockImagesGrid.appendChild(thumb);
+      thumbs.push(thumb);
     });
 
     stockImagesSection.hidden = false;
+    report(`Found ${images.length} matching image${images.length === 1 ? "" : "s"}.`, "success");
+
+    if (autoApplyFirst && images[0]) {
+      const applied = await applySuggestedImage(images[0], thumbs[0]);
+      if (applied) {
+        report(`Poster ready with a matching image. ${images.length > 1 ? "Tap another thumbnail to change it." : ""}`.trim(), "success");
+      }
+    }
   } catch {
     stockImagesSection.hidden = true;
+    report("Image search failed. You can upload one manually.", "error");
   }
 }
 
@@ -1713,6 +1850,9 @@ function clamp(value, min, max) {
 /* ── Image Utilities ── */
 
 async function imageFromUrl(url) {
+  if (url.startsWith("data:")) {
+    return createImage(url);
+  }
   return createImage(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`);
 }
 
