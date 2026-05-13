@@ -394,7 +394,6 @@ writeApplyBtn.addEventListener("click", async () => {
   writeApplyBtn.disabled = true;
   setWriteStatus("Finding matching images...");
   await fetchStockImages(text, {
-    autoApplyFirst: true,
     onStatus: setWriteStatus,
   });
   writeApplyBtn.disabled = false;
