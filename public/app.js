@@ -147,7 +147,7 @@ const state = {
   logoSize: 110,
   logoImage: null,
   shortlyLogoImage: null,   // alt logo used when exporting for X
-  useShortlyLogo: false,    // toggled by Post to X handler
+  useShortlyLogo: false,    // toggled by the X download handler
   secondLogoImage: null,
   tag: "none",       // "none" | "trending" | "breaking"
   tagImages: {},     // { trending: Image, breaking: Image }
@@ -232,7 +232,7 @@ pixLogo.onerror = () => {
   console.warn("Logo failed to load — using text fallback.");
 };
 
-// Alt logo used only when exporting for X (Post to X button).
+// Alt logo used only when exporting for X downloads.
 // PNG, square — same aspect ratio as Pix logo, so the existing slot scaler
 // handles it identically (130×130 slot for X exports, see drawFixedLogos).
 const shortlyLogo = new Image();
@@ -426,11 +426,12 @@ function scrollPreviewIntoViewIfMobile() {
   }
 }
 
-/* ── Post to X ── */
+/* ── Download for X ── */
 const postXBtn    = document.getElementById("post-x-btn");
 const postXStatus = document.getElementById("post-x-status");
 
 function setPostStatus(msg, kind) {
+  if (!postXStatus) return;
   postXStatus.className = "status-text" + (kind ? ` ${kind}` : "");
   postXStatus.textContent = "";
   if (msg) postXStatus.append(msg);
@@ -520,28 +521,7 @@ async function fetchAiCaption(headline, timeoutMs = 12000) {
   }
 }
 
-function isLikelyMobileDevice() {
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "")
-    || (navigator.maxTouchPoints > 1 && window.matchMedia("(max-width: 900px)").matches);
-}
-
-function openXComposer(caption) {
-  const encoded = encodeURIComponent(caption);
-  const intentUrl = `https://x.com/intent/post?text=${encoded}`;
-
-  if (!isLikelyMobileDevice()) {
-    return { intentUrl, opened: !!window.open(intentUrl, "_blank", "noopener,noreferrer"), usedAppLink: false };
-  }
-
-  window.location.href = `twitter://post?message=${encoded}`;
-  window.setTimeout(() => {
-    window.open(intentUrl, "_blank", "noopener,noreferrer");
-  }, 900);
-
-  return { intentUrl, opened: true, usedAppLink: true };
-}
-
-postXBtn.addEventListener("click", () => {
+if (postXBtn) postXBtn.addEventListener("click", () => {
   const headline = (state.headline || "").trim();
   if (!headline) {
     setPostStatus("Build a poster first.", "error");
@@ -549,101 +529,50 @@ postXBtn.addEventListener("click", () => {
   }
 
   postXBtn.disabled = true;
-  setPostStatus("Generating caption with AI…");
+  setPostStatus("Preparing X download...");
 
   // Flag for clean export with the Shortly logo. Screen canvas is left
-  // alone — the export happens on a 2× offscreen canvas via
+  // alone - the export happens on a 2x offscreen canvas via
   // renderToHighResCanvas, then we restore state and re-render screen.
   state.isDownloading = true;
   state.useShortlyLogo = true;
 
-  // Two parallel async operations:
-  //   1. Render at high res → cropped blob (~80ms)
-  //   2. Call OpenAI for an AI-written caption + hashtags (~1–2s)
-  const blobPromise = new Promise((resolve) => {
+  try {
     const exportCanvas = renderToHighResCanvas(EXPORT_SCALE);
-    // Crop the trailing black gradient gap. Padding/minHeight scale with
-    // EXPORT_SCALE because the high-res canvas is in scaled pixel space.
     const cropped = exportCanvasCroppedToContent(exportCanvas, {
       paddingBelow: 36   * EXPORT_SCALE,
       minHeight:    1100 * EXPORT_SCALE,
     });
-    cropped.toBlob((b) => {
-      // Restore preview state: Pix logo + overlays back on
+
+    cropped.toBlob((blob) => {
       state.isDownloading = false;
       state.useShortlyLogo = false;
       renderPoster();
-      resolve(b);
-    }, "image/png");
-  });
-  const captionPromise = fetchAiCaption(headline);
 
-  (async () => {
-    // 1) COPY TO CLIPBOARD FIRST — must happen while this tab is focused.
-    //    ClipboardItem accepts a Promise<Blob>, which preserves the user
-    //    gesture chain better than awaiting the blob outright.
-    let clipboardOk = false;
-    try {
-      if (navigator.clipboard && window.ClipboardItem) {
-        await navigator.clipboard.write([
-          new ClipboardItem({ "image/png": blobPromise })
-        ]);
-        clipboardOk = true;
+      if (!blob) {
+        postXBtn.disabled = false;
+        setPostStatus("Couldn't render image.", "error");
+        return;
       }
-    } catch (e) {
-      console.warn("Clipboard write failed:", e);
-    }
 
-    const blob = await blobPromise;
-    if (!blob) {
+      const blobUrl = URL.createObjectURL(blob);
+      const dl = document.createElement("a");
+      dl.href = blobUrl;
+      dl.download = `${slugify(headline || "pix-post")}-x.png`;
+      dl.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
       postXBtn.disabled = false;
-      setPostStatus("Couldn't render image.", "error");
-      return;
-    }
-
-    // 2) Trigger PNG download so the user has the file even if clipboard
-    //    paste fails (mobile X tab, browser permissions, etc.)
-    const blobUrl = URL.createObjectURL(blob);
-    const dl = document.createElement("a");
-    dl.href = blobUrl;
-    dl.download = `${slugify(headline || "pix-post")}.png`;
-    dl.click();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-
-    // 3) Wait for AI caption (already in flight), then open X with it
-    setPostStatus("Opening X…");
-    const { caption, source, error } = await captionPromise;
-    const { intentUrl, opened, usedAppLink } = openXComposer(caption);
-
-    // 4) Status — surface AI failures clearly so we can debug
-    postXStatus.textContent = "";
-    if (source === "ai") {
-      postXStatus.className = "status-text success";
-      postXStatus.append(
-        clipboardOk
-          ? (usedAppLink
-            ? "✓ Caption ready, opening X app. Image copied + downloaded; paste or attach it in X."
-            : "✓ Caption ready, image copied + downloaded — Ctrl+V on the X tab.")
-          : (usedAppLink
-            ? "✓ Caption ready, opening X app. Image downloaded; attach it in X."
-            : "✓ Caption ready, image downloaded — attach it on the X tab.")
-      );
-    } else {
-      // AI failed — make it visible
-      postXStatus.className = "status-text error";
-      postXStatus.append(`⚠ AI caption failed (${error || "unknown"}) — used raw headline. `);
-    }
-    if (!opened) {
-      const a = document.createElement("a");
-      a.href = intentUrl; a.target = "_blank"; a.rel = "noopener";
-      a.textContent = "Open X →";
-      postXStatus.append(a);
-    }
-
+      setPostStatus("X-ready PNG downloaded.", "success");
+    }, "image/png");
+  } catch (error) {
+    state.isDownloading = false;
+    state.useShortlyLogo = false;
+    renderPoster();
     postXBtn.disabled = false;
-  })();
+    setPostStatus("Couldn't render X download.", "error");
+    console.error("X download failed:", error);
+  }
 });
-
 downloadButton.addEventListener("click", () => {
   // Flag for clean export (no preview overlays). We DO NOT re-render the
   // screen canvas — the export happens entirely on a 2× offscreen canvas

@@ -1143,7 +1143,7 @@ canvas.dragging { cursor: grabbing; }
   }
   body.sheet-open { overflow: hidden; }
 
-  /* ─── Action bar (Post to X + Download) — below preview on mobile ─── */
+  /* ─── Download actions below preview on mobile ─── */
   .download-wrap {
     position: static;
     z-index: auto;
