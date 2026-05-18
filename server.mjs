@@ -111,6 +111,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url?.startsWith("/api/flux-image?")) {
+    await handleFluxImage(req, res);
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/api/twitter/post") {
     await handleTwitterPost(req, res);
     return;
@@ -227,6 +232,82 @@ async function handleGoogleImages(req, res) {
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Image search failed." });
   }
+}
+
+async function handleFluxImage(req, res) {
+  try {
+    const falKey = process.env.FAL_KEY || secrets.FAL_KEY || secrets.falKey || "";
+    if (!falKey) {
+      sendJson(res, 503, { error: "FAL_KEY is missing." });
+      return;
+    }
+
+    const requestUrl = new URL(req.url, `http://localhost:${port}`);
+    const query = requestUrl.searchParams.get("query")?.trim();
+    if (!query) {
+      sendJson(res, 400, { error: "A prompt is required." });
+      return;
+    }
+
+    const prompt = buildFluxPrompt(query);
+    const result = await runFalFlux(falKey, prompt);
+    const images = (result.images || [])
+      .map((image, index) => {
+        const url = image.url;
+        return {
+          id: `flux-${result.seed || Date.now()}-${index}`,
+          alt: query,
+          preview: url ? `/api/image?url=${encodeURIComponent(url)}` : null,
+          image: url,
+          imageProxy: url ? `/api/image?url=${encodeURIComponent(url)}` : null,
+          source: "flux",
+        };
+      })
+      .filter((image) => image.preview && image.imageProxy);
+
+    if (!images.length) {
+      sendJson(res, 502, { error: "Flux returned no images." });
+      return;
+    }
+
+    sendJson(res, 200, { images, source: "flux" });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Flux image generation failed." });
+  }
+}
+
+function buildFluxPrompt(query) {
+  return [
+    "Create a high-quality editorial news background image.",
+    `Subject: ${query}.`,
+    "Photorealistic, dramatic but natural lighting, sharp focus, premium newsroom/social poster style.",
+    "No text, no words, no captions, no logos, no watermarks.",
+  ].join(" ");
+}
+
+async function runFalFlux(falKey, prompt) {
+  const response = await fetch("https://fal.run/fal-ai/flux/schnell", {
+    method: "POST",
+    headers: {
+      "Authorization": `Key ${falKey}`,
+      "Content-Type": "application/json",
+      "X-Fal-Store-IO": "0",
+    },
+    body: JSON.stringify({
+      prompt,
+      image_size: "portrait_16_9",
+      num_images: 1,
+      enable_safety_checker: true,
+      output_format: "jpeg",
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.detail || payload.error || `fal returned ${response.status}`;
+    throw new Error(Array.isArray(detail) ? detail.map((item) => item.msg || item.message || String(item)).join("; ") : detail);
+  }
+  return payload;
 }
 
 async function tryBingImages(query, max) {
@@ -1049,4 +1130,3 @@ async function handleGenerateCaption(req, res) {
     res.end(JSON.stringify({ error: err.message || "Caption generation failed." }));
   }
 }
-

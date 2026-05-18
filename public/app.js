@@ -394,6 +394,7 @@ writeApplyBtn.addEventListener("click", async () => {
   writeApplyBtn.disabled = true;
   setWriteStatus("Finding matching images...");
   await fetchStockImages(text, {
+    autoApplyRandom: true,
     onStatus: setWriteStatus,
   });
   writeApplyBtn.disabled = false;
@@ -1073,7 +1074,7 @@ async function runScrape() {
 }
 
 async function fetchStockImages(headline, options = {}) {
-  const { autoApplyFirst = false, onStatus = null } = options;
+  const { autoApplyFirst = false, autoApplyRandom = false, onStatus = null } = options;
   const selectionNonceAtStart = state.imageSelectionNonce;
   const report = (message, type) => {
     if (typeof onStatus === "function") onStatus(message, type);
@@ -1096,16 +1097,27 @@ async function fetchStockImages(headline, options = {}) {
 
     let images = [];
 
-    // 2. Try Web / News Images first (Bing -> Google -> DDG)
+    // 2. Try Flux generation first when FAL_KEY is configured server-side.
     try {
-      const gRes = await fetch(`/api/google-images?query=${encodeURIComponent(searchQuery)}`);
-      const gData = await gRes.json();
-      if (gRes.ok && gData.images?.length) {
-        images = gData.images;
+      const fRes = await fetch(`/api/flux-image?query=${encodeURIComponent(searchQuery)}`);
+      const fData = await fRes.json();
+      if (fRes.ok && fData.images?.length) {
+        images = fData.images;
+      }
+    } catch { /* Flux failed, try Web / News Images */ }
+
+    // 3. Try Web / News Images next (Bing -> Google -> DDG)
+    try {
+      if (!images.length) {
+        const gRes = await fetch(`/api/google-images?query=${encodeURIComponent(searchQuery)}`);
+        const gData = await gRes.json();
+        if (gRes.ok && gData.images?.length) {
+          images = gData.images;
+        }
       }
     } catch { /* Web images failed, try Stock Pexels */ }
 
-    // 3. Fallback to Pexels if web photos returned nothing
+    // 4. Fallback to Pexels if Flux and web photos returned nothing.
     if (!images.length) {
       try {
         const pRes = await fetch(`/api/stock-images?query=${encodeURIComponent(searchQuery)}`);
@@ -1127,32 +1139,40 @@ async function fetchStockImages(headline, options = {}) {
     }
 
     stockImagesGrid.innerHTML = "";
+    const getLoadableImageUrls = (img) => {
+      const urls = [img.imageProxy, img.image, img.preview].filter(Boolean);
+      return [...new Set(urls)];
+    };
+
     const applySuggestedImage = async (img, thumb = null, expectedNonce = null) => {
       if (expectedNonce !== null && state.imageSelectionNonce !== expectedNonce) {
         return false;
       }
       report("Loading selected image...");
       setStatus("Loading image...");
-      try {
-        const fullImg = await imageFromUrl(img.imageProxy);
-        if (expectedNonce !== null && state.imageSelectionNonce !== expectedNonce) {
-          return false;
+      for (const imageUrl of getLoadableImageUrls(img)) {
+        try {
+          const fullImg = await imageFromUrl(imageUrl);
+          if (expectedNonce !== null && state.imageSelectionNonce !== expectedNonce) {
+            return false;
+          }
+          await ensureImageFocalPoint(fullImg);
+          claimImageSelection();
+          state.mainImage = fullImg;
+          resetImageControls();
+          renderPoster();
+          report("Image applied.", "success");
+          setStatus("Image applied!", "success");
+          stockImagesGrid.querySelectorAll(".stock-item").forEach(t => t.classList.remove("active"));
+          if (thumb) thumb.classList.add("active");
+          return true;
+        } catch {
+          // Keep trying the next available URL for this result.
         }
-        await ensureImageFocalPoint(fullImg);
-        claimImageSelection();
-        state.mainImage = fullImg;
-        resetImageControls();
-        renderPoster();
-        report("Image applied.", "success");
-        setStatus("Image applied!", "success");
-        stockImagesGrid.querySelectorAll(".stock-item").forEach(t => t.classList.remove("active"));
-        if (thumb) thumb.classList.add("active");
-        return true;
-      } catch {
-        report("Failed to load that image.", "error");
-        setStatus("Failed to load image.", "error");
-        return false;
       }
+      report("Failed to load that image.", "error");
+      setStatus("Failed to load image.", "error");
+      return false;
     };
 
     const thumbs = [];
@@ -1169,10 +1189,26 @@ async function fetchStockImages(headline, options = {}) {
     stockImagesSection.hidden = false;
     report(`Found ${images.length} matching image${images.length === 1 ? "" : "s"}.`, "success");
 
-    if (autoApplyFirst && images[0] && state.imageSelectionNonce === selectionNonceAtStart) {
-      const applied = await applySuggestedImage(images[0], thumbs[0], selectionNonceAtStart);
+    if ((autoApplyFirst || autoApplyRandom) && images[0] && state.imageSelectionNonce === selectionNonceAtStart) {
+      const order = images.map((_, index) => index);
+      if (autoApplyRandom) {
+        for (let i = order.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [order[i], order[j]] = [order[j], order[i]];
+        }
+      }
+
+      let applied = false;
+      for (const index of order) {
+        if (state.imageSelectionNonce !== selectionNonceAtStart) break;
+        applied = await applySuggestedImage(images[index], thumbs[index], selectionNonceAtStart);
+        if (applied) break;
+      }
+
       if (applied) {
         report(`Poster ready with a matching image. ${images.length > 1 ? "Tap another thumbnail to change it." : ""}`.trim(), "success");
+      } else if (state.imageSelectionNonce === selectionNonceAtStart) {
+        report("Found images, but none loaded. Try a thumbnail or upload one manually.", "error");
       }
     }
   } catch {

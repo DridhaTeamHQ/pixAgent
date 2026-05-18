@@ -37,6 +37,7 @@ pixAgent/
    | Name | Required for |
    |---|---|
    | `OPENAI_API_KEY` | AI tweet captions |
+   | `FAL_KEY` | Flux-generated background images |
    | `PEXELS_API_KEY` | Stock background images |
 
    Twitter API keys are only needed if you re-enable `/api/twitter/post`. The

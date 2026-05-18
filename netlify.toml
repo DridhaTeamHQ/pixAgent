@@ -22,3 +22,8 @@
   from = "/api/google-images"
   to = "/.netlify/functions/google-images"
   status = 200
+
+[[redirects]]
+  from = "/api/flux-image"
+  to = "/.netlify/functions/flux-image"
+  status = 200
