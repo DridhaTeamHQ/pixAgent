@@ -40,8 +40,8 @@ pixAgent/
    | `PEXELS_API_KEY` | Stock background images |
 
    Twitter API keys are only needed if you re-enable `/api/twitter/post`. The
-   current frontend uses `x.com/intent/post` and doesn't call the server, so
-   they can be omitted.
+   current frontend only downloads PNG files and does not open X, so they can
+   be omitted.
 
 3. **Deploy** — every push to `main` auto-deploys.
 

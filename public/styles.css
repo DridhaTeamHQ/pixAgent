@@ -843,11 +843,11 @@ canvas.dragging { cursor: grabbing; }
   line-height: 1;
 }
 
-#post-x-status a {
+#x-download-status a {
   color: var(--accent);
   text-decoration: underline;
 }
-#post-x-status { margin-top: 8px; min-height: 1em; }
+#x-download-status { margin-top: 8px; min-height: 1em; }
 
 /* ─── Utilities ──────────────────────────────────────────────── */
 .hidden { display: none !important; }
@@ -1165,7 +1165,7 @@ canvas.dragging { cursor: grabbing; }
   }
   .download-wrap .btn-x { flex: 0 0 44%; }
   .download-wrap .btn-primary { flex: 1; }
-  .download-wrap #post-x-status {
+  .download-wrap #x-download-status {
     flex: 1 0 100%;
     margin: 2px 4px 0;
     text-align: center;

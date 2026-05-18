@@ -427,14 +427,14 @@ function scrollPreviewIntoViewIfMobile() {
 }
 
 /* ── Download for X ── */
-const postXBtn    = document.getElementById("post-x-btn");
-const postXStatus = document.getElementById("post-x-status");
+const xDownloadBtn = document.getElementById("x-download-btn");
+const xDownloadStatus = document.getElementById("x-download-status");
 
 function setPostStatus(msg, kind) {
-  if (!postXStatus) return;
-  postXStatus.className = "status-text" + (kind ? ` ${kind}` : "");
-  postXStatus.textContent = "";
-  if (msg) postXStatus.append(msg);
+  if (!xDownloadStatus) return;
+  xDownloadStatus.className = "status-text" + (kind ? ` ${kind}` : "");
+  xDownloadStatus.textContent = "";
+  if (msg) xDownloadStatus.append(msg);
 }
 
 // Crop the canvas vertically to where the last non-black pixel lives, so the
@@ -521,14 +521,14 @@ async function fetchAiCaption(headline, timeoutMs = 12000) {
   }
 }
 
-if (postXBtn) postXBtn.addEventListener("click", () => {
+if (xDownloadBtn) xDownloadBtn.addEventListener("click", () => {
   const headline = (state.headline || "").trim();
   if (!headline) {
     setPostStatus("Build a poster first.", "error");
     return;
   }
 
-  postXBtn.disabled = true;
+  xDownloadBtn.disabled = true;
   setPostStatus("Preparing X download...");
 
   // Flag for clean export with the Shortly logo. Screen canvas is left
@@ -550,7 +550,7 @@ if (postXBtn) postXBtn.addEventListener("click", () => {
       renderPoster();
 
       if (!blob) {
-        postXBtn.disabled = false;
+        xDownloadBtn.disabled = false;
         setPostStatus("Couldn't render image.", "error");
         return;
       }
@@ -561,14 +561,14 @@ if (postXBtn) postXBtn.addEventListener("click", () => {
       dl.download = `${slugify(headline || "pix-post")}-x.png`;
       dl.click();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      postXBtn.disabled = false;
+      xDownloadBtn.disabled = false;
       setPostStatus("X-ready PNG downloaded.", "success");
     }, "image/png");
   } catch (error) {
     state.isDownloading = false;
     state.useShortlyLogo = false;
     renderPoster();
-    postXBtn.disabled = false;
+    xDownloadBtn.disabled = false;
     setPostStatus("Couldn't render X download.", "error");
     console.error("X download failed:", error);
   }
