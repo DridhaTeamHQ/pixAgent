@@ -27,3 +27,8 @@
   from = "/api/flux-image"
   to = "/.netlify/functions/flux-image"
   status = 200
+
+[[redirects]]
+  from = "/api/analyze-image"
+  to = "/.netlify/functions/analyze-image"
+  status = 200

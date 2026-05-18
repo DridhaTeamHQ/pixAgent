@@ -12,11 +12,12 @@ export async function handler(event) {
     }
 
     const query = (event.queryStringParameters?.query || "").trim();
+    const context = (event.queryStringParameters?.context || "").trim();
     if (!query) {
       return json(400, { error: "A prompt is required." });
     }
 
-    const result = await runFalFlux(falKey, buildFluxPrompt(query));
+    const result = await runFalFlux(falKey, buildFluxPrompt(query, context));
     const images = (result.images || [])
       .map((image, index) => {
         const url = image.url;
@@ -41,13 +42,20 @@ export async function handler(event) {
   }
 }
 
-function buildFluxPrompt(query) {
-  return [
+function buildFluxPrompt(query, context = "") {
+  const parts = [
     "Create a high-quality editorial news background image.",
     `Subject: ${query}.`,
+  ];
+  if (context) {
+    parts.push(`Use these product-image recognition details as visual guidance: ${context}.`);
+    parts.push("Respect any readable product text exactly if it appears, and preserve the identified pattern/motif style without inventing fake labels.");
+  }
+  parts.push(
     "Photorealistic, dramatic but natural lighting, sharp focus, premium newsroom/social poster style.",
-    "No text, no words, no captions, no logos, no watermarks.",
-  ].join(" ");
+    "Do not add unrelated text, captions, fake logos, or watermarks.",
+  );
+  return parts.join(" ");
 }
 
 async function runFalFlux(falKey, prompt) {

@@ -116,6 +116,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && req.url === "/api/analyze-image") {
+    await handleAnalyzeImage(req, res);
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/api/twitter/post") {
     await handleTwitterPost(req, res);
     return;
@@ -244,12 +249,13 @@ async function handleFluxImage(req, res) {
 
     const requestUrl = new URL(req.url, `http://localhost:${port}`);
     const query = requestUrl.searchParams.get("query")?.trim();
+    const context = requestUrl.searchParams.get("context")?.trim() || "";
     if (!query) {
       sendJson(res, 400, { error: "A prompt is required." });
       return;
     }
 
-    const prompt = buildFluxPrompt(query);
+    const prompt = buildFluxPrompt(query, context);
     const result = await runFalFlux(falKey, prompt);
     const images = (result.images || [])
       .map((image, index) => {
@@ -276,13 +282,115 @@ async function handleFluxImage(req, res) {
   }
 }
 
-function buildFluxPrompt(query) {
-  return [
+async function handleAnalyzeImage(req, res) {
+  try {
+    const apiKey = process.env.OPENAI_API_KEY || secrets.OPENAI_API_KEY || "";
+    if (!apiKey) {
+      sendJson(res, 503, { error: "OPENAI_API_KEY is missing." });
+      return;
+    }
+
+    const body = await readJson(req, { limit: 8_000_000 });
+    const imageData = (body.imageData || "").trim();
+    if (!imageData || !imageData.startsWith("data:image/")) {
+      sendJson(res, 400, { error: "A base64 image data URL is required." });
+      return;
+    }
+
+    const analysis = await analyzeImageWithOpenAI(apiKey, imageData);
+    sendJson(res, 200, { analysis });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Image analysis failed." });
+  }
+}
+
+async function analyzeImageWithOpenAI(apiKey, imageData) {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      input: [{
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: [
+              "Analyze this product image for a poster background generator.",
+              "Use OCR/text recognition carefully. Also identify repeated patterns, product type, packaging shape, colors, materials, logos, labels, icons, and visible brand cues.",
+              "Return only compact JSON with these keys:",
+              "visibleText: exact text strings you can read,",
+              "productType: short product category,",
+              "brandCues: short array,",
+              "patterns: short array of visual patterns or repeated motifs,",
+              "colors: short array,",
+              "promptHints: one concise sentence for image generation.",
+              "If no text is readable, visibleText must be an empty array. Do not guess unreadable text.",
+            ].join(" "),
+          },
+          { type: "input_image", image_url: imageData, detail: "high" },
+        ],
+      }],
+      max_output_tokens: 500,
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.error?.message || `OpenAI returned ${response.status}`;
+    throw new Error(detail);
+  }
+
+  const text = extractOpenAIOutputText(payload).trim();
+  try {
+    return normalizeImageAnalysis(JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")));
+  } catch {
+    return normalizeImageAnalysis({ promptHints: text });
+  }
+}
+
+function extractOpenAIOutputText(payload) {
+  if (payload.output_text) return payload.output_text;
+  const chunks = [];
+  for (const item of payload.output || []) {
+    for (const content of item.content || []) {
+      if (content.type === "output_text" && content.text) chunks.push(content.text);
+    }
+  }
+  return chunks.join("\n");
+}
+
+function normalizeImageAnalysis(value) {
+  const arrayOfStrings = (items) => Array.isArray(items)
+    ? items.map((item) => String(item).trim()).filter(Boolean).slice(0, 8)
+    : [];
+  return {
+    visibleText: arrayOfStrings(value.visibleText),
+    productType: String(value.productType || "").trim().slice(0, 120),
+    brandCues: arrayOfStrings(value.brandCues),
+    patterns: arrayOfStrings(value.patterns),
+    colors: arrayOfStrings(value.colors),
+    promptHints: String(value.promptHints || "").trim().slice(0, 500),
+  };
+}
+
+function buildFluxPrompt(query, context = "") {
+  const parts = [
     "Create a high-quality editorial news background image.",
     `Subject: ${query}.`,
+  ];
+  if (context) {
+    parts.push(`Use these product-image recognition details as visual guidance: ${context}.`);
+    parts.push("Respect any readable product text exactly if it appears, and preserve the identified pattern/motif style without inventing fake labels.");
+  }
+  parts.push(
     "Photorealistic, dramatic but natural lighting, sharp focus, premium newsroom/social poster style.",
-    "No text, no words, no captions, no logos, no watermarks.",
-  ].join(" ");
+    "Do not add unrelated text, captions, fake logos, or watermarks.",
+  );
+  return parts.join(" ");
 }
 
 async function runFalFlux(falKey, prompt) {
@@ -881,12 +989,13 @@ function normalizeUrl(value) {
   }
 }
 
-function readJson(req) {
+function readJson(req, options = {}) {
+  const limit = options.limit || 1_000_000;
   return new Promise((resolve, reject) => {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 1_000_000) {
+      if (body.length > limit) {
         reject(new Error("Request body too large."));
         req.destroy();
       }

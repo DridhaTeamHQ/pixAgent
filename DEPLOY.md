@@ -36,7 +36,7 @@ pixAgent/
 
    | Name | Required for |
    |---|---|
-   | `OPENAI_API_KEY` | AI tweet captions |
+   | `OPENAI_API_KEY` | AI tweet captions and product image OCR/pattern recognition |
    | `FAL_KEY` | Flux-generated background images |
    | `PEXELS_API_KEY` | Stock background images |
 

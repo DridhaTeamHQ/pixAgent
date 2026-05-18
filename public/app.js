@@ -153,6 +153,7 @@ const state = {
   tagImages: {},     // { trending: Image, breaking: Image }
   isDownloading: false,
   imageSelectionNonce: 0,
+  productImageAnalysis: null,
 
   /* ── Image filters (CSS-style values applied via ctx.filter) ── */
   filterBrightness: 100,    // 0–200 (100 = neutral)
@@ -922,6 +923,7 @@ bgImageUpload.addEventListener("change", (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
   const uploadNonce = claimImageSelection();
+  state.productImageAnalysis = null;
   const reader = new FileReader();
   reader.onload = async (ev) => {
     const img = new Image();
@@ -935,11 +937,52 @@ bgImageUpload.addEventListener("change", (e) => {
       renderPoster();
       setStatus("Custom image loaded!", "success");
       bgImageUpload.value = "";
+      analyzeUploadedProductImage(ev.target.result, uploadNonce);
     };
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
 });
+
+async function analyzeUploadedProductImage(imageData, expectedNonce) {
+  try {
+    setStatus("Reading product text and patterns...");
+    const prepared = await prepareImageForAnalysis(imageData);
+    if (state.imageSelectionNonce !== expectedNonce) return;
+
+    const response = await fetch("/api/analyze-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageData: prepared }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Image analysis failed.");
+    if (state.imageSelectionNonce !== expectedNonce) return;
+
+    state.productImageAnalysis = payload.analysis || null;
+    const text = (state.productImageAnalysis?.visibleText || []).join(", ");
+    setStatus(text ? `Product text recognized: ${text}` : "Product patterns recognized.", "success");
+  } catch (error) {
+    console.warn("Product image analysis failed:", error);
+    if (state.imageSelectionNonce === expectedNonce) {
+      setStatus("Custom image loaded. Product text recognition unavailable.", "success");
+    }
+  }
+}
+
+async function prepareImageForAnalysis(imageData) {
+  const img = await createImage(imageData);
+  const maxSide = 1200;
+  const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.round(img.width * scale));
+  out.height = Math.max(1, Math.round(img.height * scale));
+  const outCtx = out.getContext("2d");
+  outCtx.imageSmoothingEnabled = true;
+  outCtx.imageSmoothingQuality = "high";
+  outCtx.drawImage(img, 0, 0, out.width, out.height);
+  return out.toDataURL("image/jpeg", 0.86);
+}
 
 /* ── Canvas drag-to-pan ── */
 
@@ -1092,14 +1135,20 @@ async function fetchStockImages(headline, options = {}) {
     const words = headline.toUpperCase().replace(/[^A-Z0-9\s]/g, "").split(/\s+/).filter(Boolean);
     const keywords = words.filter(w => !STOP.has(w) && w.length > 2).slice(0, 5); // Take top 5 meaningful words
 
-    // Fallback to exactly 40 chars of the headline if keyword extraction fails
-    const searchQuery = keywords.length > 0 ? keywords.join(" ") : headline.slice(0, 40);
+    // Fallback to exactly 40 chars of the headline if keyword extraction fails.
+    let searchQuery = keywords.length > 0 ? keywords.join(" ") : headline.slice(0, 40);
+    const imageContext = buildProductImageContext(state.productImageAnalysis);
+    const imageSearchTerms = buildProductSearchTerms(state.productImageAnalysis);
+    if (imageSearchTerms) {
+      searchQuery = `${searchQuery} ${imageSearchTerms}`.trim().slice(0, 120);
+    }
 
     let images = [];
 
     // 2. Try Flux generation first when FAL_KEY is configured server-side.
     try {
-      const fRes = await fetch(`/api/flux-image?query=${encodeURIComponent(searchQuery)}`);
+      const fluxUrl = `/api/flux-image?query=${encodeURIComponent(searchQuery)}${imageContext ? `&context=${encodeURIComponent(imageContext)}` : ""}`;
+      const fRes = await fetch(fluxUrl);
       const fData = await fRes.json();
       if (fRes.ok && fData.images?.length) {
         images = fData.images;
@@ -1222,6 +1271,33 @@ async function fetchStockImages(headline, options = {}) {
 // Compute the headline layout (lines + font) AND its top y position based on
 // canvas.height - bottomPadding. Done once per render and stashed on state
 // so drawBackground / drawTag / drawHeadline all use the same anchor.
+function buildProductSearchTerms(analysis) {
+  if (!analysis) return "";
+  return [
+    analysis.productType,
+    ...(analysis.visibleText || []).slice(0, 3),
+    ...(analysis.brandCues || []).slice(0, 2),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/[^\w\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+function buildProductImageContext(analysis) {
+  if (!analysis) return "";
+  const parts = [];
+  if (analysis.productType) parts.push(`product type: ${analysis.productType}`);
+  if (analysis.visibleText?.length) parts.push(`visible text/OCR: ${analysis.visibleText.join(", ")}`);
+  if (analysis.brandCues?.length) parts.push(`brand cues: ${analysis.brandCues.join(", ")}`);
+  if (analysis.patterns?.length) parts.push(`patterns: ${analysis.patterns.join(", ")}`);
+  if (analysis.colors?.length) parts.push(`colors: ${analysis.colors.join(", ")}`);
+  if (analysis.promptHints) parts.push(`prompt hints: ${analysis.promptHints}`);
+  return parts.join("; ").slice(0, 900);
+}
+
 function computeHeadlineLayoutAndTop() {
   const L = getLayout();
   const text = state.headline || "YOUR HEADLINE HERE";
