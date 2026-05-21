@@ -87,10 +87,9 @@ const LAYOUT_PRESETS = {
     sub:   "Story / Reel",
     W: 920,  H: 1700,
     logo:     { centerX: 810, centerY: 150, slotPix: 100, slotShortly: 112 },
-    /* 9:16 keeps a big bottomPadding (~400 px) because the preview
-       engagement + nav bars occupy that band, and Stories/Reels platforms
-       overlay their own UI in that zone in the published feed. */
-    headline: { x: 64, bottomPadding: 400, maxWidth: 920 - 128, defaultSize: 49 },
+    /* 9:16 leaves room for the preview engagement + nav bars while keeping
+       the headline closer to the likes row. */
+    headline: { x: 64, bottomPadding: 335, maxWidth: 920 - 128, defaultSize: 49 },
     tag:      { x: 64, gapAboveHeadline: 16 },
     gradient: { fadeHeight: 330 },
     showPreviewBars: true,
