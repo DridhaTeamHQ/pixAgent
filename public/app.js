@@ -89,7 +89,7 @@ const LAYOUT_PRESETS = {
     logo:     { centerX: 810, centerY: 150, slotPix: 100, slotShortly: 112 },
     /* 9:16 leaves room for the preview engagement + nav bars while keeping
        the headline closer to the likes row. */
-    headline: { x: 64, bottomPadding: 335, maxWidth: 920 - 128, defaultSize: 49 },
+    headline: { x: 64, bottomPadding: 305, maxWidth: 920 - 128, defaultSize: 49 },
     tag:      { x: 64, gapAboveHeadline: 16 },
     gradient: { fadeHeight: 330 },
     showPreviewBars: true,
