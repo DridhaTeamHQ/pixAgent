@@ -47,6 +47,7 @@ const scrapeUrlInput = document.getElementById("scrape-url");
 const scrapeButton = document.getElementById("scrape-btn");
 const scrapeStatus = document.getElementById("scrape-status");
 const downloadButton = document.getElementById("download-btn");
+const previewModeToggle = document.getElementById("preview-mode-toggle");
 
 const editPanel = document.getElementById("edit-panel");
 const imagePanel = document.getElementById("image-panel");
@@ -147,6 +148,7 @@ const state = {
   logoImage: null,
   shortlyLogoImage: null,   // alt logo used when exporting for X
   useShortlyLogo: false,    // toggled by the X download handler
+  previewMode: "pix",       // "pix" | "x"
   secondLogoImage: null,
   tag: "none",       // "none" | "trending" | "breaking"
   tagImages: {},     // { trending: Image, breaking: Image }
@@ -239,6 +241,7 @@ const shortlyLogo = new Image();
 shortlyLogo.src = "./assests/shortly-logo.png";
 shortlyLogo.onload = () => {
   state.shortlyLogoImage = shortlyLogo;
+  renderPoster();
   console.log("✓ Shortly logo loaded — will be used for X exports");
 };
 shortlyLogo.onerror = () => {
@@ -295,6 +298,16 @@ modeTabs.addEventListener("click", (e) => {
   }
 });
 
+if (previewModeToggle) {
+  previewModeToggle.addEventListener("click", (e) => {
+    const btn = e.target.closest(".preview-mode-btn");
+    if (!btn) return;
+    state.previewMode = btn.dataset.previewMode === "x" ? "x" : "pix";
+    syncPreviewModeUI();
+    renderPoster();
+  });
+}
+
 function setWriteStatus(message, type) {
   if (!writeStatus) return;
   writeStatus.textContent = message || "";
@@ -313,6 +326,19 @@ function resetImageControls() {
 function claimImageSelection() {
   state.imageSelectionNonce += 1;
   return state.imageSelectionNonce;
+}
+
+function isXRenderMode() {
+  return state.useShortlyLogo || (!state.isDownloading && state.previewMode === "x");
+}
+
+function syncPreviewModeUI() {
+  if (!previewModeToggle) return;
+  previewModeToggle.querySelectorAll(".preview-mode-btn").forEach((btn) => {
+    const active = btn.dataset.previewMode === state.previewMode;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-checked", active ? "true" : "false");
+  });
 }
 
 function buildFallbackImageSuggestions(searchQuery, count = 6) {
@@ -1310,7 +1336,7 @@ function computeHeadlineLayoutAndTop() {
   const fontSize = m ? parseFloat(m[1]) : 49;
 
   const blockHeight = (layout.lines.length - 1) * layout.lineHeight + fontSize;
-  const bottomPadding = state.isDownloading && state.useShortlyLogo
+  const bottomPadding = isXRenderMode()
     ? 56
     : L.headline.bottomPadding;
   const top = Math.max(0, canvas.height - bottomPadding - blockHeight);
@@ -1335,7 +1361,7 @@ function renderPoster() {
   // Preview-only UI elements (not included in download).
   // Only the 9:16 preset shows the Reels-style engagement + nav bars; on
   // square / wide / 4:5 ratios these mockups don't make visual sense.
-  if (!state.isDownloading && getLayout().showPreviewBars) {
+  if (!state.isDownloading && !isXRenderMode() && getLayout().showPreviewBars) {
     drawEngagementBar();
     drawNavBar();
   }
@@ -1440,7 +1466,7 @@ function drawLogo(x, y, size) {
 
 function drawFixedLogos() {
   // Pick logo: when exporting for X, swap to Shortly (if loaded). Else use Pix.
-  const useAlt = state.useShortlyLogo && state.shortlyLogoImage;
+  const useAlt = isXRenderMode() && state.shortlyLogoImage;
   const logo = useAlt ? state.shortlyLogoImage : state.logoImage;
   if (!logo) return;
 

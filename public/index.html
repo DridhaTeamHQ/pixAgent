@@ -280,7 +280,13 @@
     <section class="glass-panel preview-panel">
       <div class="preview-header">
         <span class="preview-title">Live Preview</span>
-        <span class="preview-pixels" id="preview-pixels">920 × 1700</span>
+        <div class="preview-header-actions">
+          <div class="preview-mode-toggle" id="preview-mode-toggle" role="radiogroup" aria-label="Preview mode">
+            <button type="button" class="preview-mode-btn active" data-preview-mode="pix" role="radio" aria-checked="true">Pix</button>
+            <button type="button" class="preview-mode-btn" data-preview-mode="x" role="radio" aria-checked="false">X</button>
+          </div>
+          <span class="preview-pixels" id="preview-pixels">920 × 1700</span>
+        </div>
       </div>
 
       <div class="canvas-container">
