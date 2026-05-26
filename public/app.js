@@ -1310,8 +1310,11 @@ function computeHeadlineLayoutAndTop() {
   const fontSize = m ? parseFloat(m[1]) : 49;
 
   const blockHeight = (layout.lines.length - 1) * layout.lineHeight + fontSize;
-  const top = Math.max(0, canvas.height - L.headline.bottomPadding - blockHeight);
-  return { layout, top, fontSize, blockHeight };
+  const bottomPadding = state.isDownloading && state.useShortlyLogo
+    ? 56
+    : L.headline.bottomPadding;
+  const top = Math.max(0, canvas.height - bottomPadding - blockHeight);
+  return { layout, top, fontSize, blockHeight, bottomPadding };
 }
 
 function renderPoster() {
