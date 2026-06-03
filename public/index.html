@@ -19,7 +19,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800;900&family=Roboto+Serif:opsz,wght@8..144,400;8..144,600;8..144,700;8..144,800&display=swap" rel="stylesheet">
 </head>
-<body>
+<body class="auth-checking">
 
   <!-- Inline SVG sprite (chevron used by every accordion header) -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -34,8 +34,23 @@
       <span class="nav-logo-mark">Px</span>
       Pix Post Builder
     </div>
-    <span class="nav-badge">Beta</span>
+    <div class="nav-actions">
+      <a class="nav-link" href="https://shortlyagents.vercel.app/">Shortly Agents</a>
+      <span class="nav-badge">Beta</span>
+    </div>
   </nav>
+
+  <section id="agent-auth-gate" class="agent-auth-gate" aria-live="polite">
+    <div class="agent-auth-card">
+      <span class="agent-auth-kicker">Shortly Agents</span>
+      <h1>Pix access check</h1>
+      <p id="agent-auth-message">Checking your Shortly Agents login...</p>
+      <div class="agent-auth-actions">
+        <a class="btn-primary agent-auth-primary" href="https://shortlyagents.vercel.app/">Open Shortly Agents</a>
+        <button type="button" id="agent-auth-retry" class="btn-secondary">Retry</button>
+      </div>
+    </div>
+  </section>
 
   <!-- Mobile-only floating "edit" button — tap to pop up the controls sheet.
        Hidden on desktop (CSS); opening sets body.sheet-open. -->

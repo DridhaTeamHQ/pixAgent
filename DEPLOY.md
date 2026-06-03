@@ -38,7 +38,13 @@ pixAgent/
    |---|---|
    | `OPENAI_API_KEY` | AI tweet captions and product image OCR/pattern recognition |
    | `FAL_KEY` | Flux-generated background images |
+   | `SHORTLY_AGENT_AUTH_SECRET` | Shortly Agents signed access tokens |
    | `PEXELS_API_KEY` | Stock background images |
+
+   `SHORTLY_AGENT_AUTH_SECRET` must be the same secret used by Shortly Agents
+   to sign Pix launch tokens. Pix accepts tokens shaped as
+   `base64url(JSON payload).base64url(HMAC_SHA256(payload, secret))` with an
+   optional `exp` Unix timestamp and `agentId` of `pix-post-agent` or `pix`.
 
    Twitter API keys are only needed if you re-enable `/api/twitter/post`. The
    current frontend only downloads PNG files and does not open X, so they can

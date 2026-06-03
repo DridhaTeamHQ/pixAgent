@@ -48,6 +48,9 @@ const scrapeButton = document.getElementById("scrape-btn");
 const scrapeStatus = document.getElementById("scrape-status");
 const downloadButton = document.getElementById("download-btn");
 const previewModeToggle = document.getElementById("preview-mode-toggle");
+const agentAuthGate = document.getElementById("agent-auth-gate");
+const agentAuthMessage = document.getElementById("agent-auth-message");
+const agentAuthRetry = document.getElementById("agent-auth-retry");
 
 const editPanel = document.getElementById("edit-panel");
 const imagePanel = document.getElementById("image-panel");
@@ -69,6 +72,11 @@ const faceDetector =
   typeof window !== "undefined" && "FaceDetector" in window
     ? new FaceDetector({ fastMode: true, maxDetectedFaces: 1 })
     : null;
+
+const SHORTLY_AGENTS_URL = "https://shortlyagents.vercel.app/";
+const AGENT_TOKEN_STORAGE_KEY = "pixagent.shortlyToken";
+
+initAgentAccess();
 
 /* ── Aspect-ratio layout presets ──
    Each preset defines the canvas size + every key element's position so a
@@ -155,6 +163,7 @@ const state = {
   isDownloading: false,
   imageSelectionNonce: 0,
   productImageAnalysis: null,
+  agentUser: null,
 
   /* ── Image filters (CSS-style values applied via ctx.filter) ── */
   filterBrightness: 100,    // 0–200 (100 = neutral)
@@ -313,6 +322,56 @@ function setWriteStatus(message, type) {
   writeStatus.textContent = message || "";
   writeStatus.className = "status-text";
   if (type) writeStatus.classList.add(type);
+}
+
+if (agentAuthRetry) {
+  agentAuthRetry.addEventListener("click", () => {
+    initAgentAccess({ forceRefresh: true });
+  });
+}
+
+async function initAgentAccess({ forceRefresh = false } = {}) {
+  setAgentAuthState("checking", "Checking your Shortly Agents login...");
+
+  const params = new URLSearchParams(window.location.search);
+  const urlToken = params.get("token") || params.get("access_token") || "";
+  if (urlToken) {
+    sessionStorage.setItem(AGENT_TOKEN_STORAGE_KEY, urlToken);
+    params.delete("token");
+    params.delete("access_token");
+    const cleanQuery = params.toString();
+    const cleanUrl = `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}${window.location.hash}`;
+    window.history.replaceState({}, "", cleanUrl);
+  }
+
+  const token = forceRefresh ? "" : (urlToken || sessionStorage.getItem(AGENT_TOKEN_STORAGE_KEY) || "");
+
+  try {
+    const response = await fetch("/api/agent-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.authenticated) {
+      sessionStorage.removeItem(AGENT_TOKEN_STORAGE_KEY);
+      setAgentAuthState("blocked", payload.error || "Open Pix from Shortly Agents to continue.");
+      return;
+    }
+
+    state.agentUser = payload.user || null;
+    const name = state.agentUser?.displayName || state.agentUser?.username;
+    setAgentAuthState("ready", name ? `Signed in as ${name}.` : "Access ready.");
+  } catch {
+    setAgentAuthState("blocked", "Could not verify Shortly Agents access. Try again or open Shortly Agents.");
+  }
+}
+
+function setAgentAuthState(status, message) {
+  document.body.classList.remove("auth-checking", "auth-ready", "auth-blocked");
+  document.body.classList.add(status === "ready" ? "auth-ready" : status === "blocked" ? "auth-blocked" : "auth-checking");
+  if (agentAuthMessage) agentAuthMessage.textContent = message || "";
+  if (agentAuthGate) agentAuthGate.hidden = status === "ready";
 }
 
 function resetImageControls() {

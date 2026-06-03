@@ -62,6 +62,69 @@ body {
   overscroll-behavior-x: none;
 }
 
+body.auth-checking .app-nav,
+body.auth-checking .fab,
+body.auth-checking .app-shell,
+body.auth-blocked .app-nav,
+body.auth-blocked .fab,
+body.auth-blocked .app-shell {
+  display: none;
+}
+
+body.auth-ready .agent-auth-gate {
+  display: none;
+}
+
+.agent-auth-gate {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.agent-auth-card {
+  width: min(520px, 100%);
+  padding: 28px;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(180deg, rgba(22, 22, 34, 0.94), rgba(12, 12, 20, 0.94));
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-lg);
+}
+
+.agent-auth-kicker {
+  display: inline-flex;
+  margin-bottom: 12px;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.agent-auth-card h1 {
+  margin: 0 0 10px;
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+}
+
+.agent-auth-card p {
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.65;
+}
+
+.agent-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.agent-auth-primary {
+  text-decoration: none;
+}
+
 /* ─── Touch & a11y baseline ────────────────────────────────── */
 
 /* Eliminates the 300 ms double-tap-to-zoom delay on every clickable element */
@@ -159,6 +222,23 @@ button:focus-visible,
   border-radius: 100px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nav-link {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.nav-link:hover {
+  color: var(--text-primary);
 }
 
 /* ─── Typography ─────────────────────────────────────────────── */

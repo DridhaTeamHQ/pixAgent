@@ -1,6 +1,7 @@
 import http from "node:http";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { TwitterApi } from "twitter-api-v2";
 
 const root = join(process.cwd(), "public");
@@ -98,6 +99,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && req.url?.startsWith("/api/image?")) {
     await handleImageProxy(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/agent-session") {
+    await handleAgentSession(req, res);
     return;
   }
 
@@ -237,6 +243,90 @@ async function handleGoogleImages(req, res) {
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Image search failed." });
   }
+}
+
+async function handleAgentSession(req, res) {
+  try {
+    const secret = process.env.SHORTLY_AGENT_AUTH_SECRET || secrets.SHORTLY_AGENT_AUTH_SECRET || "";
+    if (!secret) {
+      sendJson(res, 200, {
+        required: false,
+        authenticated: true,
+        user: null,
+      });
+      return;
+    }
+
+    const body = await readJson(req);
+    const token = String(body.token || "").trim();
+    if (!token) {
+      sendJson(res, 401, {
+        required: true,
+        authenticated: false,
+        error: "Missing Shortly access token.",
+      });
+      return;
+    }
+
+    const payload = verifyShortlyAgentToken(token, secret);
+    if (!payload) {
+      sendJson(res, 401, {
+        required: true,
+        authenticated: false,
+        error: "Invalid or expired Shortly access token.",
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      required: true,
+      authenticated: true,
+      user: {
+        loginId: payload.loginId || payload.id || null,
+        agentId: payload.agentId || "pix-post-agent",
+        username: payload.username || null,
+        displayName: payload.displayName || payload.name || payload.username || "Shortly user",
+      },
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Agent session check failed." });
+  }
+}
+
+function verifyShortlyAgentToken(token, secret) {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+
+  const [payloadPart, signaturePart] = parts;
+  const expected = base64UrlEncode(createHmac("sha256", secret).update(payloadPart).digest());
+  if (!safeEqual(signaturePart, expected)) return null;
+
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp && Number(payload.exp) < now) return null;
+  if (payload.agentId && payload.agentId !== "pix-post-agent" && payload.agentId !== "pix") return null;
+  return payload;
+}
+
+function base64UrlEncode(buffer) {
+  return Buffer.from(buffer)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
 }
 
 async function handleFluxImage(req, res) {
