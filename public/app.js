@@ -1497,14 +1497,16 @@ function drawPixTextScreen() {
   ctx.beginPath();
   ctx.roundRect(cardX, cardY, cardW, cardH, radius);
   ctx.clip();
-  drawCoverImage(image, cardX, cardY, cardW, cardH, state.imageOffset, (state.imageZoom || 100) / 100);
+  drawTextPreviewBackgroundImage(image, cardX, cardY, cardW, cardH, state.imageOffset, (state.imageZoom || 100) / 100, s);
 
   const dim = ctx.createLinearGradient(0, cardY, 0, cardY + cardH);
-  dim.addColorStop(0, "rgba(1, 8, 14, 0.58)");
-  dim.addColorStop(0.34, "rgba(0, 0, 0, 0.38)");
-  dim.addColorStop(0.58, "rgba(0, 0, 0, 0.62)");
-  dim.addColorStop(1, "rgba(0, 0, 0, 0.96)");
+  dim.addColorStop(0, "rgba(0, 0, 0, 0.78)");
+  dim.addColorStop(0.34, "rgba(0, 0, 0, 0.64)");
+  dim.addColorStop(0.66, "rgba(0, 0, 0, 0.72)");
+  dim.addColorStop(1, "rgba(0, 0, 0, 0.94)");
   ctx.fillStyle = dim;
+  ctx.fillRect(cardX, cardY, cardW, cardH);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
   ctx.fillRect(cardX, cardY, cardW, cardH);
 
   drawTextPreviewLogo(cardX + cardW - 142 * scaleX, cardY + 42 * scaleY, 112 * s);
@@ -1519,6 +1521,37 @@ function drawPixTextScreen() {
   drawPixPageDots(0.5 * W, 1558 * scaleY, s);
   drawNavBar();
 
+  ctx.restore();
+}
+
+function drawTextPreviewBackgroundImage(image, x, y, width, height, offset, zoom, scale = 1) {
+  const bleed = 34 * scale;
+  const drawX = x - bleed;
+  const drawY = y - bleed;
+  const drawW = width + bleed * 2;
+  const drawH = height + bleed * 2;
+  const baseScale = Math.max(drawW / image.width, drawH / image.height);
+  const imageScale = baseScale * (zoom || 1);
+  const drawWidth = image.width * imageScale;
+  const drawHeight = image.height * imageScale;
+  const focal = image.__focalPoint || { x: image.width / 2, y: image.height / 2 };
+
+  let dx = drawX + drawW / 2 - focal.x * imageScale;
+  let dy = drawY + drawH / 2 - focal.y * imageScale;
+
+  if (offset) {
+    dx += offset.x;
+    dy += offset.y;
+  }
+
+  const minX = drawX + drawW - drawWidth;
+  const minY = drawY + drawH - drawHeight;
+  dx = clamp(dx, minX, drawX);
+  dy = clamp(dy, minY, drawY);
+
+  ctx.save();
+  ctx.filter = `blur(${Math.round(18 * scale)}px) brightness(62%) contrast(108%) saturate(72%)`;
+  ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
   ctx.restore();
 }
 
