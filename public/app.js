@@ -1494,9 +1494,9 @@ function drawPixTextScreen() {
   ctx.fillRect(cardX, cardY, cardW, cardH);
 
   const textX = cardX + 58 * scaleX;
-  const textY = cardY + 600 * scaleY;
-  const maxTextY = cardY + cardH - 250 * scaleY;
-  drawWrappedPreviewText(getDetailTextForPreview(), textX, textY, cardW - 116 * scaleX, maxTextY, 39 * s, 61 * s);
+  const minTextY = cardY + 560 * scaleY;
+  const lastLineY = cardY + cardH - 300 * scaleY;
+  drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, cardW - 116 * scaleX, lastLineY, 39 * s, 61 * s);
   ctx.restore();
 
   drawEngagementBar();
@@ -1552,7 +1552,7 @@ function drawPixStatusBar(scaleX, scaleY, s) {
   ctx.restore();
 }
 
-function drawWrappedPreviewText(text, x, y, maxWidth, maxY, fontSize, lineHeight) {
+function drawWrappedPreviewText(text, x, minY, maxY, fontSize, lineHeight) {
   const words = limitWordsClient(text, 390).split(/\s+/).filter(Boolean);
   ctx.save();
   ctx.font = `400 ${Math.round(fontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
@@ -1564,7 +1564,7 @@ function drawWrappedPreviewText(text, x, y, maxWidth, maxY, fontSize, lineHeight
   ctx.shadowOffsetY = 5;
 
   let line = "";
-  let cy = y;
+  const lines = [];
   for (let i = 0; i < words.length; i += 1) {
     const test = line ? `${line} ${words[i]}` : words[i];
     if (ctx.measureText(test).width <= maxWidth) {
@@ -1572,19 +1572,28 @@ function drawWrappedPreviewText(text, x, y, maxWidth, maxY, fontSize, lineHeight
       continue;
     }
 
-    if (cy + lineHeight > maxY) {
-      drawEllipsizedLine(line, x, cy, maxWidth);
-      ctx.restore();
-      return;
-    }
-    ctx.fillText(line, x, cy);
-    cy += lineHeight;
+    lines.push(line);
     line = words[i];
   }
 
-  if (line && cy <= maxY) {
-    ctx.fillText(line, x, cy);
+  if (line) lines.push(line);
+
+  const availableLines = Math.max(1, Math.floor((maxY - minY) / lineHeight) + 1);
+  const visibleLines = lines.slice(0, availableLines);
+  const overflowed = lines.length > visibleLines.length;
+  if (overflowed) {
+    visibleLines[visibleLines.length - 1] = `${visibleLines[visibleLines.length - 1]}...`;
   }
+
+  const startY = Math.max(minY, maxY - (visibleLines.length - 1) * lineHeight);
+  visibleLines.forEach((visibleLine, index) => {
+    const cy = startY + index * lineHeight;
+    if (overflowed && index === visibleLines.length - 1) {
+      drawEllipsizedLine(visibleLine, x, cy, maxWidth);
+      return;
+    }
+    ctx.fillText(visibleLine, x, cy);
+  });
   ctx.restore();
 }
 
