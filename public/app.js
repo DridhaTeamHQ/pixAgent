@@ -143,6 +143,7 @@ const state = {
   aspectRatio: "9:16",         // key into LAYOUT_PRESETS
   accent: "#7900d9",
   headline: "",
+  detailText: "",
   mainImage: null,
   ready: false,
   imageOffset: { x: 0, y: 0 },
@@ -156,7 +157,7 @@ const state = {
   logoImage: null,
   shortlyLogoImage: null,   // alt logo used when exporting for X
   useShortlyLogo: false,    // toggled by the X download handler
-  previewMode: "pix",       // "pix" | "x"
+  previewMode: "pix",       // "pix" | "x" | "text"
   secondLogoImage: null,
   tag: "none",       // "none" | "trending" | "breaking"
   tagImages: {},     // { trending: Image, breaking: Image }
@@ -311,8 +312,13 @@ if (previewModeToggle) {
   previewModeToggle.addEventListener("click", (e) => {
     const btn = e.target.closest(".preview-mode-btn");
     if (!btn) return;
-    state.previewMode = btn.dataset.previewMode === "x" ? "x" : "pix";
+    const mode = ["pix", "x", "text"].includes(btn.dataset.previewMode) ? btn.dataset.previewMode : "pix";
+    state.previewMode = mode;
     syncPreviewModeUI();
+    if (mode === "text" && state.aspectRatio !== "9:16") {
+      applyAspectRatio("9:16");
+      return;
+    }
     renderPoster();
   });
 }
@@ -389,6 +395,10 @@ function claimImageSelection() {
 
 function isXRenderMode() {
   return state.useShortlyLogo || (!state.isDownloading && state.previewMode === "x");
+}
+
+function isTextPreviewMode() {
+  return !state.isDownloading && state.previewMode === "text";
 }
 
 function syncPreviewModeUI() {
@@ -469,6 +479,7 @@ writeApplyBtn.addEventListener("click", async () => {
   const text = writeHeadline.value.trim();
   if (!text) return;
   state.headline = text;
+  state.detailText = limitWordsClient(text, 390);
   headlineEdit.value = text;
   editPanel.hidden = false;
   imagePanel.hidden = false;
@@ -488,6 +499,7 @@ writeApplyBtn.addEventListener("click", async () => {
 // Live sync: write-headline → headline-edit → poster
 writeHeadline.addEventListener("input", () => {
   state.headline = writeHeadline.value;
+  state.detailText = limitWordsClient(writeHeadline.value, 390);
   headlineEdit.value = writeHeadline.value;
   setWriteStatus("");
   renderPoster();
@@ -686,8 +698,13 @@ downloadButton.addEventListener("click", () => {
 
 // Headline live edit
 headlineEdit.addEventListener("input", () => {
+  const previousManualText = writeHeadline.value;
+  const detailWasManualText = state.detailText === limitWordsClient(previousManualText, 390);
   state.headline = headlineEdit.value;
   writeHeadline.value = headlineEdit.value;
+  if (!state.detailText || detailWasManualText) {
+    state.detailText = limitWordsClient(headlineEdit.value, 390);
+  }
   renderPoster();
 });
 
@@ -1160,6 +1177,7 @@ async function runScrape() {
 
     // Update state
     state.headline = payload.title || "";
+    state.detailText = limitWordsClient(payload.detailText || payload.articleText || payload.title || "", 390);
     state.ready = true;
 
     // Reset offsets
@@ -1407,6 +1425,11 @@ function renderPoster() {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
 
+  if (isTextPreviewMode()) {
+    drawPixTextScreen();
+    return;
+  }
+
   // Compute headline layout + bottom-anchored top ONCE for this render and
   // share via state._render so drawBackground / drawTag / drawHeadline don't
   // each have to recompute the same thing.
@@ -1424,6 +1447,166 @@ function renderPoster() {
     drawEngagementBar();
     drawNavBar();
   }
+}
+
+function drawPixTextScreen() {
+  const image = state.mainImage || defaultMain;
+  const W = canvas.width;
+  const H = canvas.height;
+  const scaleX = W / 920;
+  const scaleY = H / 1700;
+  const s = Math.min(scaleX, scaleY);
+
+  ctx.save();
+  ctx.fillStyle = "#070707";
+  ctx.fillRect(0, 0, W, H);
+
+  drawPixStatusBar(scaleX, scaleY, s);
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+  ctx.font = `${Math.round(32 * s)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText("‹", 46 * scaleX, 152 * scaleY);
+
+  ctx.font = `700 ${Math.round(35 * s)}px 'Roboto Serif', Georgia, serif`;
+  ctx.textAlign = "center";
+  ctx.fillText("Pix", W / 2, 146 * scaleY);
+
+  const cardX = 16 * scaleX;
+  const cardY = 202 * scaleY;
+  const cardW = W - 32 * scaleX;
+  const cardH = 1340 * scaleY;
+  const radius = 24 * s;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(cardX, cardY, cardW, cardH, radius);
+  ctx.clip();
+  drawCoverImage(image, cardX, cardY, cardW, cardH, state.imageOffset, (state.imageZoom || 100) / 100);
+
+  const dim = ctx.createLinearGradient(0, cardY, 0, cardY + cardH);
+  dim.addColorStop(0, "rgba(1, 8, 14, 0.58)");
+  dim.addColorStop(0.34, "rgba(0, 0, 0, 0.38)");
+  dim.addColorStop(0.58, "rgba(0, 0, 0, 0.62)");
+  dim.addColorStop(1, "rgba(0, 0, 0, 0.96)");
+  ctx.fillStyle = dim;
+  ctx.fillRect(cardX, cardY, cardW, cardH);
+
+  const textX = cardX + 58 * scaleX;
+  const textY = cardY + 600 * scaleY;
+  const maxTextY = cardY + cardH - 250 * scaleY;
+  drawWrappedPreviewText(getDetailTextForPreview(), textX, textY, cardW - 116 * scaleX, maxTextY, 39 * s, 61 * s);
+  ctx.restore();
+
+  drawEngagementBar();
+  drawPixPageDots(0.5 * W, 1558 * scaleY, s);
+  drawNavBar();
+
+  ctx.restore();
+}
+
+function drawPixStatusBar(scaleX, scaleY, s) {
+  ctx.save();
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `700 ${Math.round(29 * s)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText("9:41", 104 * scaleX, 45 * scaleY);
+
+  const right = canvas.width - 72 * scaleX;
+  const y = 45 * scaleY;
+
+  ctx.strokeStyle = "#ffffff";
+  ctx.fillStyle = "#ffffff";
+  ctx.lineWidth = 4 * s;
+  for (let i = 0; i < 4; i += 1) {
+    const h = (9 + i * 6) * s;
+    ctx.fillRect(right - 140 * scaleX + i * 14 * scaleX, y + 17 * scaleY - h, 7 * scaleX, h);
+  }
+
+  ctx.beginPath();
+  ctx.arc(right - 70 * scaleX, y + 6 * scaleY, 30 * s, Math.PI * 1.18, Math.PI * 1.82);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(right - 70 * scaleX, y + 6 * scaleY, 18 * s, Math.PI * 1.18, Math.PI * 1.82);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(right - 70 * scaleX, y + 8 * scaleY, 4 * s, 0, Math.PI * 2);
+  ctx.fill();
+
+  const bx = right - 18 * scaleX;
+  const by = y - 14 * scaleY;
+  const bw = 52 * scaleX;
+  const bh = 25 * scaleY;
+  ctx.lineWidth = 3 * s;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 6 * s);
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(bx + bw + 4 * scaleX, by + 8 * scaleY, 4 * scaleX, 9 * scaleY);
+  ctx.beginPath();
+  ctx.roundRect(bx + 5 * scaleX, by + 5 * scaleY, bw - 10 * scaleX, bh - 10 * scaleY, 4 * s);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawWrappedPreviewText(text, x, y, maxWidth, maxY, fontSize, lineHeight) {
+  const words = limitWordsClient(text, 390).split(/\s+/).filter(Boolean);
+  ctx.save();
+  ctx.font = `400 ${Math.round(fontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.48)";
+  ctx.shadowBlur = 14;
+  ctx.shadowOffsetY = 5;
+
+  let line = "";
+  let cy = y;
+  for (let i = 0; i < words.length; i += 1) {
+    const test = line ? `${line} ${words[i]}` : words[i];
+    if (ctx.measureText(test).width <= maxWidth) {
+      line = test;
+      continue;
+    }
+
+    if (cy + lineHeight > maxY) {
+      drawEllipsizedLine(line, x, cy, maxWidth);
+      ctx.restore();
+      return;
+    }
+    ctx.fillText(line, x, cy);
+    cy += lineHeight;
+    line = words[i];
+  }
+
+  if (line && cy <= maxY) {
+    ctx.fillText(line, x, cy);
+  }
+  ctx.restore();
+}
+
+function drawEllipsizedLine(line, x, y, maxWidth) {
+  let output = `${line}...`;
+  while (output.length > 4 && ctx.measureText(output).width > maxWidth) {
+    output = `${output.slice(0, -4).trimEnd()}...`;
+  }
+  ctx.fillText(output, x, y);
+}
+
+function drawPixPageDots(cx, cy, s) {
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.24)";
+  ctx.beginPath();
+  ctx.arc(cx - 11 * s, cy, 7 * s, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(cx + 11 * s, cy, 7 * s, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawBackground() {
@@ -2070,6 +2253,20 @@ function makeSvgImage(svg) {
 }
 
 /* ── Helpers ── */
+
+function getDetailTextForPreview() {
+  return limitWordsClient(state.detailText || state.headline || "Paste a URL or write text to build a Pix story preview.", 390);
+}
+
+function limitWordsClient(value, maxWords) {
+  return (value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, maxWords)
+    .join(" ");
+}
 
 function slugify(value) {
   return (value || "pix-post").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "pix-post";

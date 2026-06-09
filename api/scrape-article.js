@@ -59,13 +59,32 @@ export default async function handler(req, res) {
       return;
     }
 
+    const articleText = extractArticleText(html);
+
     res.status(200).json({
       title: cleanupText(title),
       image: image || null,
       imageProxy: image ? `/api/image?url=${encodeURIComponent(image)}` : null,
       sourceUrl: targetUrl,
+      articleText,
+      detailText: limitWords(articleText || title, 390),
     });
   } catch (err) {
     res.status(500).json({ error: err.message || "Article scrape failed." });
   }
+}
+
+function extractArticleText(html) {
+  const articleMatch = html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i);
+  const scope = articleMatch?.[1] || html;
+  const paragraphs = [...scope.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+    .map((match) => cleanupText(stripTags(match[1] || "")))
+    .filter((text) => text.length >= 50 && text.length <= 360)
+    .filter((text) => !/^(sign up|read more|copyright|follow live|watch:)/i.test(text));
+  return paragraphs.slice(0, 8).join(" ");
+}
+
+function limitWords(value, maxWords) {
+  const words = cleanupText(value || "").split(/\s+/).filter(Boolean);
+  return words.slice(0, maxWords).join(" ");
 }

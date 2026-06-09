@@ -724,11 +724,15 @@ async function handleScrapeArticle(req, res) {
       return;
     }
 
+    const articleText = extractArticleText(html);
+
     sendJson(res, 200, {
       title: cleanupText(title),
       image: image || null,
       imageProxy: image ? `/api/image?url=${encodeURIComponent(image)}` : null,
-      sourceUrl: targetUrl
+      sourceUrl: targetUrl,
+      articleText,
+      detailText: limitWords(articleText || title, 390),
     });
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Article scrape failed." });
@@ -1113,7 +1117,12 @@ function extractArticleText(html) {
     .map((match) => cleanupText(stripTags(match[1] || "")))
     .filter((text) => text.length >= 50 && text.length <= 360)
     .filter((text) => !/^(sign up|read more|copyright|follow live|watch:)/i.test(text));
-  return paragraphs.slice(0, 4).join(" ");
+  return paragraphs.slice(0, 8).join(" ");
+}
+
+function limitWords(value, maxWords) {
+  const words = cleanupText(value || "").split(/\s+/).filter(Boolean);
+  return words.slice(0, maxWords).join(" ");
 }
 
 function buildPosterText(title, metaDescription, articleText) {

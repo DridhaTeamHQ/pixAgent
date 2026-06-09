@@ -68,11 +68,15 @@ export async function handler(event) {
       return json(422, { error: "Could not extract a title from this page." });
     }
 
+    const articleText = extractArticleText(html);
+
     return json(200, {
       title: cleanupText(title),
       image: image || null,
       imageProxy: image ? `/api/image?url=${encodeURIComponent(image)}` : null,
-      sourceUrl: targetUrl
+      sourceUrl: targetUrl,
+      articleText,
+      detailText: limitWords(articleText || title, 390)
     });
   } catch (error) {
     if (error.name === "AbortError") {
@@ -124,6 +128,21 @@ function stripTags(value) {
 
 function cleanupText(value) {
   return decodeHtmlEntities(value).replace(/\s+/g, " ").trim();
+}
+
+function extractArticleText(html) {
+  const articleMatch = html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i);
+  const scope = articleMatch?.[1] || html;
+  const paragraphs = [...scope.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+    .map((match) => cleanupText(stripTags(match[1] || "")))
+    .filter((text) => text.length >= 50 && text.length <= 360)
+    .filter((text) => !/^(sign up|read more|copyright|follow live|watch:)/i.test(text));
+  return paragraphs.slice(0, 8).join(" ");
+}
+
+function limitWords(value, maxWords) {
+  const words = cleanupText(value || "").split(/\s+/).filter(Boolean);
+  return words.slice(0, maxWords).join(" ");
 }
 
 function decodeHtmlEntities(value) {
