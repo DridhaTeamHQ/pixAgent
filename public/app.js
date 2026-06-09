@@ -1487,22 +1487,10 @@ function drawPixTextScreen() {
   ctx.fillStyle = "#070707";
   ctx.fillRect(0, 0, W, H);
 
-  drawPixStatusBar(scaleX, scaleY, s);
-
-  ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
-  ctx.font = `${Math.round(32 * s)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText("‹", 46 * scaleX, 152 * scaleY);
-
-  ctx.font = `700 ${Math.round(35 * s)}px 'Roboto Serif', Georgia, serif`;
-  ctx.textAlign = "center";
-  ctx.fillText("Pix", W / 2, 146 * scaleY);
-
   const cardX = 16 * scaleX;
-  const cardY = 202 * scaleY;
+  const cardY = 24 * scaleY;
   const cardW = W - 32 * scaleX;
-  const cardH = 1340 * scaleY;
+  const cardH = 1518 * scaleY;
   const radius = 24 * s;
 
   ctx.save();
@@ -1519,6 +1507,8 @@ function drawPixTextScreen() {
   ctx.fillStyle = dim;
   ctx.fillRect(cardX, cardY, cardW, cardH);
 
+  drawTextPreviewLogo(cardX + cardW - 142 * scaleX, cardY + 42 * scaleY, 112 * s);
+
   const textX = cardX + 58 * scaleX;
   const minTextY = cardY + 560 * scaleY;
   const lastLineY = cardY + cardH - 300 * scaleY;
@@ -1530,6 +1520,18 @@ function drawPixTextScreen() {
   drawNavBar();
 
   ctx.restore();
+}
+
+function drawTextPreviewLogo(x, y, size) {
+  const logo = state.shortlyLogoImage || state.logoImage;
+  if (!logo) return;
+
+  const rawW = logo.naturalWidth || logo.width || 1;
+  const rawH = logo.naturalHeight || logo.height || 1;
+  const scale = size / Math.max(rawW, rawH);
+  const drawW = rawW * scale;
+  const drawH = rawH * scale;
+  drawLogoAt(logo, x, y, drawW, drawH, { glow: logo !== state.shortlyLogoImage });
 }
 
 function drawPixStatusBar(scaleX, scaleY, s) {
