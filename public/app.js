@@ -55,6 +55,7 @@ const agentAuthRetry = document.getElementById("agent-auth-retry");
 const editPanel = document.getElementById("edit-panel");
 const imagePanel = document.getElementById("image-panel");
 const headlineEdit = document.getElementById("headline-edit");
+const detailEdit = document.getElementById("detail-edit");
 const imgOffsetX = document.getElementById("img-offset-x");
 const imgOffsetY = document.getElementById("img-offset-y");
 const imgResetBtn = document.getElementById("img-reset-btn");
@@ -289,6 +290,7 @@ document.fonts.ready.then(async () => {
 const modeTabs = document.getElementById("mode-tabs");
 const writeForm = document.getElementById("write-form");
 const writeHeadline = document.getElementById("write-headline");
+const writeDetail = document.getElementById("write-detail");
 const writeApplyBtn = document.getElementById("write-apply-btn");
 const writeStatus = document.getElementById("write-status");
 
@@ -478,9 +480,11 @@ function escapeSvgText(value) {
 writeApplyBtn.addEventListener("click", async () => {
   const text = writeHeadline.value.trim();
   if (!text) return;
+  const detail = writeDetail.value.trim() || text;
   state.headline = text;
-  state.detailText = limitWordsClient(text, 390);
+  state.detailText = limitWordsClient(detail, 390);
   headlineEdit.value = text;
+  if (detailEdit) detailEdit.value = state.detailText;
   editPanel.hidden = false;
   imagePanel.hidden = false;
   renderPoster();
@@ -499,8 +503,18 @@ writeApplyBtn.addEventListener("click", async () => {
 // Live sync: write-headline → headline-edit → poster
 writeHeadline.addEventListener("input", () => {
   state.headline = writeHeadline.value;
-  state.detailText = limitWordsClient(writeHeadline.value, 390);
   headlineEdit.value = writeHeadline.value;
+  if (!writeDetail.value.trim()) {
+    state.detailText = limitWordsClient(writeHeadline.value, 390);
+    if (detailEdit) detailEdit.value = state.detailText;
+  }
+  setWriteStatus("");
+  renderPoster();
+});
+
+writeDetail.addEventListener("input", () => {
+  state.detailText = limitWordsClient(writeDetail.value || writeHeadline.value, 390);
+  if (detailEdit) detailEdit.value = state.detailText;
   setWriteStatus("");
   renderPoster();
 });
@@ -702,11 +716,20 @@ headlineEdit.addEventListener("input", () => {
   const detailWasManualText = state.detailText === limitWordsClient(previousManualText, 390);
   state.headline = headlineEdit.value;
   writeHeadline.value = headlineEdit.value;
-  if (!state.detailText || detailWasManualText) {
+  if (!state.detailText || detailWasManualText || !writeDetail.value.trim()) {
     state.detailText = limitWordsClient(headlineEdit.value, 390);
+    if (detailEdit) detailEdit.value = state.detailText;
   }
   renderPoster();
 });
+
+if (detailEdit) {
+  detailEdit.addEventListener("input", () => {
+    state.detailText = limitWordsClient(detailEdit.value, 390);
+    writeDetail.value = state.detailText;
+    renderPoster();
+  });
+}
 
 // Image offset sliders
 imgOffsetX.addEventListener("input", () => {
@@ -1187,6 +1210,9 @@ async function runScrape() {
 
     // Populate edit panel
     headlineEdit.value = payload.title || "";
+    if (detailEdit) detailEdit.value = state.detailText;
+    writeHeadline.value = payload.title || "";
+    writeDetail.value = state.detailText;
     editPanel.hidden = false;
     imagePanel.hidden = false;
     scrollPreviewIntoViewIfMobile();
@@ -1552,7 +1578,7 @@ function drawPixStatusBar(scaleX, scaleY, s) {
   ctx.restore();
 }
 
-function drawWrappedPreviewText(text, x, minY, maxY, fontSize, lineHeight) {
+function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHeight) {
   const words = limitWordsClient(text, 390).split(/\s+/).filter(Boolean);
   ctx.save();
   ctx.font = `400 ${Math.round(fontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
