@@ -724,7 +724,8 @@ async function handleScrapeArticle(req, res) {
       return;
     }
 
-    const articleText = extractArticleText(html);
+    const metaDescription = extractMetaContent(html, ["og:description", "twitter:description", "description"]);
+    const articleText = extractArticleText(html, title);
 
     sendJson(res, 200, {
       title: cleanupText(title),
@@ -732,7 +733,7 @@ async function handleScrapeArticle(req, res) {
       imageProxy: image ? `/api/image?url=${encodeURIComponent(image)}` : null,
       sourceUrl: targetUrl,
       articleText,
-      detailText: limitWords(articleText || title, 390),
+      detailText: limitWords(articleText || metaDescription || title, 390),
     });
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Article scrape failed." });
@@ -1110,14 +1111,72 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function extractArticleText(html) {
-  const articleMatch = html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i);
-  const scope = articleMatch?.[1] || html;
-  const paragraphs = [...scope.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
-    .map((match) => cleanupText(stripTags(match[1] || "")))
-    .filter((text) => text.length >= 50 && text.length <= 360)
-    .filter((text) => !/^(sign up|read more|copyright|follow live|watch:)/i.test(text));
-  return paragraphs.slice(0, 8).join(" ");
+function extractArticleText(html, title = "") {
+  const stripped = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<(?:header|footer|nav|aside|form|button)\b[\s\S]*?<\/(?:header|footer|nav|aside|form|button)>/gi, " ");
+
+  const scopes = extractArticleScopes(stripped);
+  const scoredScopes = scopes.map((scope, index) => {
+    const paragraphs = extractParagraphCandidates(scope.html, title);
+    const score = paragraphs.reduce((sum, item) => sum + item.score, 0) + scope.priority - index;
+    return { paragraphs, score };
+  });
+
+  scoredScopes.sort((a, b) => b.score - a.score);
+  const best = scoredScopes.find((scope) => scope.paragraphs.length >= 2) || scoredScopes[0];
+  return (best?.paragraphs || []).slice(0, 10).map((item) => item.text).join(" ");
+}
+
+function extractArticleScopes(html) {
+  const scopes = [];
+  const scopePatterns = [
+    { regex: /<article\b[^>]*>([\s\S]*?)<\/article>/gi, priority: 120 },
+    { regex: /<main\b[^>]*>([\s\S]*?)<\/main>/gi, priority: 80 },
+    { regex: /<(?:section|div)\b[^>]*(?:class|id)=["'][^"']*(?:article|story|content|entry|post|body)[^"']*["'][^>]*>([\s\S]*?)<\/(?:section|div)>/gi, priority: 55 },
+  ];
+
+  for (const pattern of scopePatterns) {
+    let match;
+    while ((match = pattern.regex.exec(html)) !== null) {
+      scopes.push({ html: match[1], priority: pattern.priority });
+    }
+  }
+
+  scopes.push({ html, priority: 0 });
+  return scopes;
+}
+
+function extractParagraphCandidates(scope, title) {
+  const seen = new Set();
+  const candidates = [];
+  for (const match of scope.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)) {
+    const text = cleanupText(stripTags(match[1] || ""));
+    const key = normalizeText(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const score = scoreArticleParagraph(text, title);
+    if (score > 0) candidates.push({ text, score });
+  }
+  return candidates;
+}
+
+function scoreArticleParagraph(text, title = "") {
+  const normalized = normalizeText(text);
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (text.length < 45 || text.length > 1200 || words.length < 8) return 0;
+  if (title && normalizeText(title) === normalized) return 0;
+  if (isBoilerplateParagraph(normalized)) return 0;
+
+  const sentenceCount = (text.match(/[.!?](?:\s|$)/g) || []).length;
+  const hasNewsTerms = /\b(said|according|reported|minister|police|court|government|company|team|match|official|source|agency|statement)\b/i.test(text);
+  return Math.min(text.length, 320) + sentenceCount * 35 + (hasNewsTerms ? 80 : 0);
+}
+
+function isBoilerplateParagraph(normalized) {
+  return /\b(privacy policy|cookie policy|cookies|terms of use|sign in|sign up|subscribe|subscription|advertisement|sponsored|newsletter|all rights reserved|copyright|follow us|read more|related stories|enable javascript|disable ad blocker|allow notifications|manage settings|accept all|our privacy policy has been revised|please review updated privacy policy)\b/i.test(normalized);
 }
 
 function limitWords(value, maxWords) {

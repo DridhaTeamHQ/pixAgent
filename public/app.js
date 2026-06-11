@@ -1556,7 +1556,7 @@ function drawTextPreviewBackgroundImage(image, x, y, width, height, offset, zoom
 }
 
 function drawTextPreviewLogo(x, y, size) {
-  const logo = state.shortlyLogoImage || state.logoImage;
+  const logo = state.logoImage || state.shortlyLogoImage;
   if (!logo) return;
 
   const rawW = logo.naturalWidth || logo.width || 1;
@@ -1564,7 +1564,7 @@ function drawTextPreviewLogo(x, y, size) {
   const scale = size / Math.max(rawW, rawH);
   const drawW = rawW * scale;
   const drawH = rawH * scale;
-  drawLogoAt(logo, x, y, drawW, drawH, { glow: logo !== state.shortlyLogoImage });
+  drawLogoAt(logo, x, y, drawW, drawH, { glow: logo === state.logoImage });
 }
 
 function drawPixStatusBar(scaleX, scaleY, s) {
