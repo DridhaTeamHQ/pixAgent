@@ -1479,46 +1479,34 @@ function drawPixTextScreen() {
   const image = state.mainImage || defaultMain;
   const W = canvas.width;
   const H = canvas.height;
-  const scaleX = W / 920;
-  const scaleY = H / 1700;
-  const s = Math.min(scaleX, scaleY);
+  const L = getLayout();
+  const s = Math.min(W / 920, H / 1700);
 
   ctx.save();
   ctx.fillStyle = "#070707";
   ctx.fillRect(0, 0, W, H);
 
-  const cardX = 16 * scaleX;
-  const cardY = 24 * scaleY;
-  const cardW = W - 32 * scaleX;
-  const cardH = 1518 * scaleY;
-  const radius = 24 * s;
+  drawTextPreviewBackgroundImage(image, 0, 0, W, H, state.imageOffset, (state.imageZoom || 100) / 100, s);
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(cardX, cardY, cardW, cardH, radius);
-  ctx.clip();
-  drawTextPreviewBackgroundImage(image, cardX, cardY, cardW, cardH, state.imageOffset, (state.imageZoom || 100) / 100, s);
-
-  const dim = ctx.createLinearGradient(0, cardY, 0, cardY + cardH);
-  dim.addColorStop(0, "rgba(0, 0, 0, 0.78)");
-  dim.addColorStop(0.34, "rgba(0, 0, 0, 0.64)");
-  dim.addColorStop(0.66, "rgba(0, 0, 0, 0.72)");
-  dim.addColorStop(1, "rgba(0, 0, 0, 0.94)");
+  const dim = ctx.createLinearGradient(0, 0, 0, H);
+  dim.addColorStop(0, "rgba(0, 0, 0, 0.68)");
+  dim.addColorStop(0.34, "rgba(0, 0, 0, 0.52)");
+  dim.addColorStop(0.62, "rgba(0, 0, 0, 0.68)");
+  dim.addColorStop(1, "rgba(0, 0, 0, 0.98)");
   ctx.fillStyle = dim;
-  ctx.fillRect(cardX, cardY, cardW, cardH);
+  ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
-  ctx.fillRect(cardX, cardY, cardW, cardH);
+  ctx.fillRect(0, 0, W, H);
 
-  drawTextPreviewLogo(cardX + cardW - 142 * scaleX, cardY + 42 * scaleY, 112 * s);
+  drawFixedLogos();
 
-  const textX = cardX + 58 * scaleX;
-  const minTextY = cardY + 560 * scaleY;
-  const lastLineY = cardY + cardH - 300 * scaleY;
-  drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, cardW - 116 * scaleX, lastLineY, 39 * s, 61 * s);
-  ctx.restore();
+  const textX = L.headline.x;
+  const minTextY = H * 0.42;
+  const lastLineY = H - L.headline.bottomPadding;
+  drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, L.headline.maxWidth, lastLineY, 39 * s, 61 * s);
 
   drawEngagementBar();
-  drawPixPageDots(0.5 * W, 1558 * scaleY, s);
+  drawPixPageDots(0.5 * W, 1558 * (H / 1700), s);
   drawNavBar();
 
   ctx.restore();
@@ -2210,6 +2198,15 @@ function compressLines(lines, maxLines) {
 /* ── Cover Image Drawing ── */
 
 function drawCoverImage(image, x, y, width, height, offset, zoom) {
+  const imageAspect = image.width / image.height;
+  const frameAspect = width / height;
+  const aspectRatioDelta = Math.max(imageAspect / frameAspect, frameAspect / imageAspect);
+
+  if (aspectRatioDelta >= 1.45) {
+    drawAdaptiveCoverImage(image, x, y, width, height, offset, zoom);
+    return;
+  }
+
   const baseScale = Math.max(width / image.width, height / image.height);
   const scale = baseScale * (zoom || 1);
   const drawWidth = image.width * scale;
@@ -2234,6 +2231,52 @@ function drawCoverImage(image, x, y, width, height, offset, zoom) {
   // "none" immediately after the draw so subsequent layers render normally.
   ctx.save();
   ctx.filter = buildFilterString();
+  ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
+  ctx.restore();
+}
+
+function drawAdaptiveCoverImage(image, x, y, width, height, offset, zoom) {
+  const focal = image.__focalPoint || { x: image.width / 2, y: image.height / 2 };
+  const bgScale = Math.max(width / image.width, height / image.height) * Math.max(zoom || 1, 1);
+  const bgWidth = image.width * bgScale;
+  const bgHeight = image.height * bgScale;
+
+  let bgX = x + width / 2 - focal.x * bgScale;
+  let bgY = y + height / 2 - focal.y * bgScale;
+  if (offset) {
+    bgX += offset.x;
+    bgY += offset.y;
+  }
+  bgX = clamp(bgX, x + width - bgWidth, x);
+  bgY = clamp(bgY, y + height - bgHeight, y);
+
+  ctx.save();
+  ctx.filter = `${buildFilterString()} blur(14px) brightness(72%)`;
+  ctx.drawImage(image, bgX, bgY, bgWidth, bgHeight);
+  ctx.restore();
+
+  const containScale = Math.min(width / image.width, height / image.height) * Math.max(zoom || 1, 1);
+  const fgWidth = image.width * containScale;
+  const fgHeight = image.height * containScale;
+  const framePad = Math.min(width, height) * 0.04;
+  const maxWidth = width - framePad * 2;
+  const maxHeight = height - framePad * 2;
+  const fitScale = Math.min(maxWidth / fgWidth, maxHeight / fgHeight, 1);
+  const drawWidth = fgWidth * fitScale;
+  const drawHeight = fgHeight * fitScale;
+
+  let dx = x + (width - drawWidth) / 2;
+  let dy = y + (height - drawHeight) / 2;
+  if (offset) {
+    const maxOffsetX = Math.max(0, (drawWidth - maxWidth) / 2);
+    const maxOffsetY = Math.max(0, (drawHeight - maxHeight) / 2);
+    dx += clamp(offset.x, -maxOffsetX, maxOffsetX);
+    dy += clamp(offset.y, -maxOffsetY, maxOffsetY);
+  }
+
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.28)";
+  ctx.shadowBlur = 26;
   ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
   ctx.restore();
 }
