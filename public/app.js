@@ -1572,13 +1572,14 @@ function drawPixTextScreen() {
 
   const textX = L.headline.x;
   const minTextY = H * 0.42;
-  const textToLikesGap = 126 * (H / 1700);
-  const lastLineY = H - L.headline.bottomPadding - textToLikesGap;
+  const lastLineY = H - 210 * (H / 1700);
   drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, L.headline.maxWidth, lastLineY, 39 * s, 61 * s);
 
-  drawEngagementBar();
-  drawPixPageDots(0.5 * W, 1558 * (H / 1700), s);
-  drawNavBar();
+  if (!state.forceTextExport) {
+    drawEngagementBar();
+    drawPixPageDots(0.5 * W, 1558 * (H / 1700), s);
+    drawNavBar();
+  }
 
   ctx.restore();
 }
@@ -2269,15 +2270,6 @@ function compressLines(lines, maxLines) {
 /* ── Cover Image Drawing ── */
 
 function drawCoverImage(image, x, y, width, height, offset, zoom) {
-  const imageAspect = image.width / image.height;
-  const frameAspect = width / height;
-  const aspectRatioDelta = Math.max(imageAspect / frameAspect, frameAspect / imageAspect);
-
-  if (aspectRatioDelta >= 1.45) {
-    drawAdaptiveCoverImage(image, x, y, width, height, offset, zoom);
-    return;
-  }
-
   const baseScale = Math.max(width / image.width, height / image.height);
   const scale = baseScale * (zoom || 1);
   const drawWidth = image.width * scale;
@@ -2302,52 +2294,6 @@ function drawCoverImage(image, x, y, width, height, offset, zoom) {
   // "none" immediately after the draw so subsequent layers render normally.
   ctx.save();
   ctx.filter = buildFilterString();
-  ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
-  ctx.restore();
-}
-
-function drawAdaptiveCoverImage(image, x, y, width, height, offset, zoom) {
-  const focal = image.__focalPoint || { x: image.width / 2, y: image.height / 2 };
-  const bgScale = Math.max(width / image.width, height / image.height) * Math.max(zoom || 1, 1);
-  const bgWidth = image.width * bgScale;
-  const bgHeight = image.height * bgScale;
-
-  let bgX = x + width / 2 - focal.x * bgScale;
-  let bgY = y + height / 2 - focal.y * bgScale;
-  if (offset) {
-    bgX += offset.x;
-    bgY += offset.y;
-  }
-  bgX = clamp(bgX, x + width - bgWidth, x);
-  bgY = clamp(bgY, y + height - bgHeight, y);
-
-  ctx.save();
-  ctx.filter = `${buildFilterString()} blur(14px) brightness(72%)`;
-  ctx.drawImage(image, bgX, bgY, bgWidth, bgHeight);
-  ctx.restore();
-
-  const containScale = Math.min(width / image.width, height / image.height) * Math.max(zoom || 1, 1);
-  const fgWidth = image.width * containScale;
-  const fgHeight = image.height * containScale;
-  const framePad = Math.min(width, height) * 0.04;
-  const maxWidth = width - framePad * 2;
-  const maxHeight = height - framePad * 2;
-  const fitScale = Math.min(maxWidth / fgWidth, maxHeight / fgHeight, 1);
-  const drawWidth = fgWidth * fitScale;
-  const drawHeight = fgHeight * fitScale;
-
-  let dx = x + (width - drawWidth) / 2;
-  let dy = y + (height - drawHeight) / 2;
-  if (offset) {
-    const maxOffsetX = Math.max(0, (drawWidth - maxWidth) / 2);
-    const maxOffsetY = Math.max(0, (drawHeight - maxHeight) / 2);
-    dx += clamp(offset.x, -maxOffsetX, maxOffsetX);
-    dy += clamp(offset.y, -maxOffsetY, maxOffsetY);
-  }
-
-  ctx.save();
-  ctx.shadowColor = "rgba(0, 0, 0, 0.28)";
-  ctx.shadowBlur = 26;
   ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
   ctx.restore();
 }
