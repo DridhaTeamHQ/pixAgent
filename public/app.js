@@ -1572,7 +1572,8 @@ function drawPixTextScreen() {
 
   const textX = L.headline.x;
   const minTextY = H * 0.42;
-  const lastLineY = H - 210 * (H / 1700);
+  const bottomTextPadding = state.forceTextExport ? 210 : 430;
+  const lastLineY = H - bottomTextPadding * (H / 1700);
   drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, L.headline.maxWidth, lastLineY, 39 * s, 61 * s);
 
   if (!state.forceTextExport) {
