@@ -11,6 +11,8 @@ const screenCtx = ctx;   // permanent reference to the on-screen context
 // and 4K-tall for 9:16 (1840×3400), at the cost of larger PNG file size
 // (~3× vs design-size). Bumping to 3 quadruples filesize for marginal gain.
 const EXPORT_SCALE = 2;
+const IMAGE_PAN_LIMIT = 900;
+const IMAGE_PAN_HEADROOM = 1.1;
 
 /**
  * Render the poster onto an offscreen canvas at `scale`× the design size and
@@ -1198,8 +1200,8 @@ window.addEventListener("mousemove", (e) => {
   const scaleY = canvas.height / rect.height;
   const dx = e.clientX * scaleX - dragStart.x;
   const dy = e.clientY * scaleY - dragStart.y;
-  state.imageOffset.x = clamp(dragOffsetStart.x + dx, -500, 500);
-  state.imageOffset.y = clamp(dragOffsetStart.y + dy, -500, 500);
+  state.imageOffset.x = clamp(dragOffsetStart.x + dx, -IMAGE_PAN_LIMIT, IMAGE_PAN_LIMIT);
+  state.imageOffset.y = clamp(dragOffsetStart.y + dy, -IMAGE_PAN_LIMIT, IMAGE_PAN_LIMIT);
   imgOffsetX.value = Math.round(state.imageOffset.x);
   imgOffsetY.value = Math.round(state.imageOffset.y);
   renderPoster();
@@ -1233,8 +1235,8 @@ canvas.addEventListener("touchmove", (e) => {
   const scaleY = canvas.height / rect.height;
   const dx = touch.clientX * scaleX - dragStart.x;
   const dy = touch.clientY * scaleY - dragStart.y;
-  state.imageOffset.x = clamp(dragOffsetStart.x + dx, -500, 500);
-  state.imageOffset.y = clamp(dragOffsetStart.y + dy, -500, 500);
+  state.imageOffset.x = clamp(dragOffsetStart.x + dx, -IMAGE_PAN_LIMIT, IMAGE_PAN_LIMIT);
+  state.imageOffset.y = clamp(dragOffsetStart.y + dy, -IMAGE_PAN_LIMIT, IMAGE_PAN_LIMIT);
   imgOffsetX.value = Math.round(state.imageOffset.x);
   imgOffsetY.value = Math.round(state.imageOffset.y);
   renderPoster();
@@ -1592,7 +1594,7 @@ function drawTextPreviewBackgroundImage(image, x, y, width, height, offset, zoom
   const drawW = width + bleed * 2;
   const drawH = height + bleed * 2;
   const baseScale = Math.max(drawW / image.width, drawH / image.height);
-  const imageScale = baseScale * (zoom || 1);
+  const imageScale = baseScale * (zoom || 1) * IMAGE_PAN_HEADROOM;
   const drawWidth = image.width * imageScale;
   const drawHeight = image.height * imageScale;
   const focal = image.__focalPoint || { x: image.width / 2, y: image.height / 2 };
@@ -2272,7 +2274,7 @@ function compressLines(lines, maxLines) {
 
 function drawCoverImage(image, x, y, width, height, offset, zoom) {
   const baseScale = Math.max(width / image.width, height / image.height);
-  const scale = baseScale * (zoom || 1);
+  const scale = baseScale * (zoom || 1) * IMAGE_PAN_HEADROOM;
   const drawWidth = image.width * scale;
   const drawHeight = image.height * scale;
   const focal = image.__focalPoint || { x: image.width / 2, y: image.height / 2 };
