@@ -939,36 +939,6 @@ canvas.dragging { cursor: grabbing; }
   letter-spacing: -0.01em;
 }
 
-.btn-text-download {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding: 11px 18px;
-  margin-bottom: 10px;
-  background: linear-gradient(135deg, #1f4f46 0%, #165f4a 100%);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-md);
-  font-family: inherit;
-  font-weight: 700;
-  font-size: 0.86rem;
-  cursor: pointer;
-  transition: var(--transition);
-}
-
-.btn-text-download:hover:not(:disabled) {
-  background: linear-gradient(135deg, #256052 0%, #1b7359 100%);
-  border-color: rgba(255, 255, 255, 0.22);
-  transform: translateY(-1px);
-}
-
-.btn-text-download:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 .btn-x:hover:not(:disabled) {
   background: #1a1a1a;
   border-color: rgba(255, 255, 255, 0.32);
@@ -1303,13 +1273,11 @@ canvas.dragging { cursor: grabbing; }
     border-top: 0;
   }
   .download-wrap .btn-x,
-  .download-wrap .btn-text-download,
   .download-wrap .btn-primary {
     margin: 0;
     min-height: 46px;
   }
-  .download-wrap .btn-x { flex: 0 0 32%; }
-  .download-wrap .btn-text-download { flex: 0 0 32%; }
+  .download-wrap .btn-x { flex: 0 0 44%; }
   .download-wrap .btn-primary { flex: 1; }
   .download-wrap #x-download-status {
     flex: 1 0 100%;

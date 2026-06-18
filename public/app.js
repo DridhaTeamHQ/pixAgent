@@ -47,7 +47,6 @@ const scrapeUrlInput = document.getElementById("scrape-url");
 const scrapeButton = document.getElementById("scrape-btn");
 const scrapeStatus = document.getElementById("scrape-status");
 const downloadButton = document.getElementById("download-btn");
-const textDownloadButton = document.getElementById("text-download-btn");
 const previewModeToggle = document.getElementById("preview-mode-toggle");
 const agentAuthGate = document.getElementById("agent-auth-gate");
 const agentAuthMessage = document.getElementById("agent-auth-message");
@@ -411,7 +410,17 @@ function syncPreviewModeUI() {
     btn.classList.toggle("active", active);
     btn.setAttribute("aria-checked", active ? "true" : "false");
   });
+  updatePrimaryDownloadButton();
 }
+
+function updatePrimaryDownloadButton() {
+  if (!downloadButton) return;
+  downloadButton.textContent = state.previewMode === "text"
+    ? "Download Text"
+    : "Download Poster PNG";
+}
+
+updatePrimaryDownloadButton();
 
 function buildFallbackImageSuggestions(searchQuery, count = 6) {
   const words = searchQuery
@@ -687,14 +696,14 @@ if (xDownloadBtn) xDownloadBtn.addEventListener("click", () => {
   }
 });
 
-if (textDownloadButton) textDownloadButton.addEventListener("click", () => {
+function downloadTextPreview() {
   const headline = (state.headline || "").trim();
   if (!headline && !getDetailTextForPreview().trim()) {
     setPostStatus("Build a poster first.", "error");
     return;
   }
 
-  textDownloadButton.disabled = true;
+  downloadButton.disabled = true;
   setPostStatus("Preparing Text download...");
 
   const previousMode = state.previewMode;
@@ -710,7 +719,7 @@ if (textDownloadButton) textDownloadButton.addEventListener("click", () => {
       renderPoster();
 
       if (!blob) {
-        textDownloadButton.disabled = false;
+        downloadButton.disabled = false;
         setPostStatus("Couldn't render text image.", "error");
         return;
       }
@@ -721,20 +730,24 @@ if (textDownloadButton) textDownloadButton.addEventListener("click", () => {
       dl.download = `${slugify(headline || "pix-post")}-text.png`;
       dl.click();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      textDownloadButton.disabled = false;
+      downloadButton.disabled = false;
       setPostStatus("Text PNG downloaded.", "success");
     }, "image/png");
   } catch (error) {
     state.isDownloading = false;
     state.previewMode = previousMode;
     renderPoster();
-    textDownloadButton.disabled = false;
+    downloadButton.disabled = false;
     setPostStatus("Couldn't render text download.", "error");
     console.error("Text download failed:", error);
   }
-});
+}
 
 downloadButton.addEventListener("click", () => {
+  if (state.previewMode === "text") {
+    downloadTextPreview();
+    return;
+  }
   // Flag for clean export (no preview overlays). We DO NOT re-render the
   // screen canvas — the export happens entirely on a 2× offscreen canvas
   // via renderToHighResCanvas, then we restore state and re-render screen.
