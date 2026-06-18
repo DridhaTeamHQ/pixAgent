@@ -896,7 +896,13 @@ if (filterPresetsContainer) {
 
 // Zoom slider
 imgZoom.addEventListener("input", () => {
-  state.imageZoom = Number(imgZoom.value);
+  const nextZoom = Number(imgZoom.value);
+  if (nextZoom < state.imageZoom) {
+    state.imageOffset = { x: 0, y: 0 };
+    imgOffsetX.value = 0;
+    imgOffsetY.value = 0;
+  }
+  state.imageZoom = nextZoom;
   renderPoster();
 });
 
@@ -1600,23 +1606,27 @@ function drawTextPreviewBackgroundImage(image, x, y, width, height, offset, zoom
   const drawHeight = image.height * imageScale;
   const focal = image.__focalPoint || { x: image.width / 2, y: image.height / 2 };
 
-  let dx = drawX + drawW / 2 - focal.x * imageScale;
-  let dy = drawY + drawH / 2 - focal.y * imageScale;
-
-  if (offset) {
-    dx += offset.x;
-    dy += offset.y;
-  }
-
-  const minX = drawX + drawW - drawWidth;
-  const minY = drawY + drawH - drawHeight;
-  dx = clamp(dx, minX, drawX);
-  dy = clamp(dy, minY, drawY);
-
   ctx.save();
   ctx.filter = `blur(${Math.round(18 * scale)}px) brightness(62%) contrast(108%) saturate(72%)`;
-  ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
+  drawBlurredCoverLayer(null);
+  drawBlurredCoverLayer(offset);
   ctx.restore();
+
+  function drawBlurredCoverLayer(layerOffset) {
+    let dx = drawX + drawW / 2 - focal.x * imageScale;
+    let dy = drawY + drawH / 2 - focal.y * imageScale;
+
+    if (layerOffset) {
+      dx += layerOffset.x;
+      dy += layerOffset.y;
+    }
+
+    const minX = drawX + drawW - drawWidth;
+    const minY = drawY + drawH - drawHeight;
+    dx = clamp(dx, minX, drawX);
+    dy = clamp(dy, minY, drawY);
+    ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
+  }
 }
 
 function drawTextPreviewLogo(x, y, size) {
