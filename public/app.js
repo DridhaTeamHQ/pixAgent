@@ -163,6 +163,7 @@ const state = {
   tag: "none",       // "none" | "trending" | "breaking"
   tagImages: {},     // { trending: Image, breaking: Image }
   isDownloading: false,
+  forceTextExport: false,
   imageSelectionNonce: 0,
   productImageAnalysis: null,
   agentUser: null,
@@ -400,7 +401,7 @@ function isXRenderMode() {
 }
 
 function isTextPreviewMode() {
-  return !state.isDownloading && state.previewMode === "text";
+  return state.previewMode === "text" && (!state.isDownloading || state.forceTextExport);
 }
 
 function syncPreviewModeUI() {
@@ -415,9 +416,12 @@ function syncPreviewModeUI() {
 
 function updatePrimaryDownloadButton() {
   if (!downloadButton) return;
-  downloadButton.textContent = state.previewMode === "text"
-    ? "Download Text"
-    : "Download Poster PNG";
+  downloadButton.textContent =
+    state.previewMode === "x"
+      ? "Download X"
+      : state.previewMode === "text"
+        ? "Download Text"
+        : "Download Poster PNG";
 }
 
 updatePrimaryDownloadButton();
@@ -643,14 +647,15 @@ async function fetchAiCaption(headline, timeoutMs = 12000) {
   }
 }
 
-if (xDownloadBtn) xDownloadBtn.addEventListener("click", () => {
+function downloadXPreview({ usePrimaryButton = false } = {}) {
   const headline = (state.headline || "").trim();
   if (!headline) {
     setPostStatus("Build a poster first.", "error");
     return;
   }
 
-  xDownloadBtn.disabled = true;
+  const targetButton = usePrimaryButton ? downloadButton : xDownloadBtn;
+  if (targetButton) targetButton.disabled = true;
   setPostStatus("Preparing X download...");
 
   // Flag for clean export with the Shortly logo. Screen canvas is left
@@ -672,7 +677,7 @@ if (xDownloadBtn) xDownloadBtn.addEventListener("click", () => {
       renderPoster();
 
       if (!blob) {
-        xDownloadBtn.disabled = false;
+        if (targetButton) targetButton.disabled = false;
         setPostStatus("Couldn't render image.", "error");
         return;
       }
@@ -683,17 +688,21 @@ if (xDownloadBtn) xDownloadBtn.addEventListener("click", () => {
       dl.download = `${slugify(headline || "pix-post")}-x.png`;
       dl.click();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      xDownloadBtn.disabled = false;
+      if (targetButton) targetButton.disabled = false;
       setPostStatus("X-ready PNG downloaded.", "success");
     }, "image/png");
   } catch (error) {
     state.isDownloading = false;
     state.useShortlyLogo = false;
     renderPoster();
-    xDownloadBtn.disabled = false;
+    if (targetButton) targetButton.disabled = false;
     setPostStatus("Couldn't render X download.", "error");
     console.error("X download failed:", error);
   }
+}
+
+if (xDownloadBtn) xDownloadBtn.addEventListener("click", () => {
+  downloadXPreview();
 });
 
 function downloadTextPreview() {
@@ -708,6 +717,7 @@ function downloadTextPreview() {
 
   const previousMode = state.previewMode;
   state.isDownloading = true;
+  state.forceTextExport = true;
   state.previewMode = "text";
 
   try {
@@ -715,6 +725,7 @@ function downloadTextPreview() {
 
     exportCanvas.toBlob((blob) => {
       state.isDownloading = false;
+      state.forceTextExport = false;
       state.previewMode = previousMode;
       renderPoster();
 
@@ -735,6 +746,7 @@ function downloadTextPreview() {
     }, "image/png");
   } catch (error) {
     state.isDownloading = false;
+    state.forceTextExport = false;
     state.previewMode = previousMode;
     renderPoster();
     downloadButton.disabled = false;
@@ -744,6 +756,10 @@ function downloadTextPreview() {
 }
 
 downloadButton.addEventListener("click", () => {
+  if (state.previewMode === "x") {
+    downloadXPreview({ usePrimaryButton: true });
+    return;
+  }
   if (state.previewMode === "text") {
     downloadTextPreview();
     return;
