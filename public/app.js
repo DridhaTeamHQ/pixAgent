@@ -47,6 +47,7 @@ const scrapeUrlInput = document.getElementById("scrape-url");
 const scrapeButton = document.getElementById("scrape-btn");
 const scrapeStatus = document.getElementById("scrape-status");
 const downloadButton = document.getElementById("download-btn");
+const textDownloadButton = document.getElementById("text-download-btn");
 const previewModeToggle = document.getElementById("preview-mode-toggle");
 const agentAuthGate = document.getElementById("agent-auth-gate");
 const agentAuthMessage = document.getElementById("agent-auth-message");
@@ -416,12 +417,7 @@ function syncPreviewModeUI() {
 
 function updatePrimaryDownloadButton() {
   if (!downloadButton) return;
-  downloadButton.textContent =
-    state.previewMode === "x"
-      ? "Download X"
-      : state.previewMode === "text"
-        ? "Download Text"
-        : "Download Poster PNG";
+  downloadButton.textContent = "Download Poster PNG";
 }
 
 updatePrimaryDownloadButton();
@@ -712,7 +708,7 @@ function downloadTextPreview() {
     return;
   }
 
-  downloadButton.disabled = true;
+  if (textDownloadButton) textDownloadButton.disabled = true;
   setPostStatus("Preparing Text download...");
 
   const previousMode = state.previewMode;
@@ -730,7 +726,7 @@ function downloadTextPreview() {
       renderPoster();
 
       if (!blob) {
-        downloadButton.disabled = false;
+        if (textDownloadButton) textDownloadButton.disabled = false;
         setPostStatus("Couldn't render text image.", "error");
         return;
       }
@@ -741,7 +737,7 @@ function downloadTextPreview() {
       dl.download = `${slugify(headline || "pix-post")}-text.png`;
       dl.click();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      downloadButton.disabled = false;
+      if (textDownloadButton) textDownloadButton.disabled = false;
       setPostStatus("Text PNG downloaded.", "success");
     }, "image/png");
   } catch (error) {
@@ -749,21 +745,17 @@ function downloadTextPreview() {
     state.forceTextExport = false;
     state.previewMode = previousMode;
     renderPoster();
-    downloadButton.disabled = false;
+    if (textDownloadButton) textDownloadButton.disabled = false;
     setPostStatus("Couldn't render text download.", "error");
     console.error("Text download failed:", error);
   }
 }
 
+if (textDownloadButton) textDownloadButton.addEventListener("click", () => {
+  downloadTextPreview();
+});
+
 downloadButton.addEventListener("click", () => {
-  if (state.previewMode === "x") {
-    downloadXPreview({ usePrimaryButton: true });
-    return;
-  }
-  if (state.previewMode === "text") {
-    downloadTextPreview();
-    return;
-  }
   // Flag for clean export (no preview overlays). We DO NOT re-render the
   // screen canvas — the export happens entirely on a 2× offscreen canvas
   // via renderToHighResCanvas, then we restore state and re-render screen.
