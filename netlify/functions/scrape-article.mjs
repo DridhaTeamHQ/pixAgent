@@ -1,4 +1,5 @@
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36";
+const TEXT_DETAIL_CHAR_LIMIT = 500;
 
 export async function handler(event) {
   // Only allow POST
@@ -77,7 +78,7 @@ export async function handler(event) {
       imageProxy: image ? `/api/image?url=${encodeURIComponent(image)}` : null,
       sourceUrl: targetUrl,
       articleText,
-      detailText: limitWords(articleText || metaDescription || title, 390)
+      detailText: limitCharacters(articleText || metaDescription || title, TEXT_DETAIL_CHAR_LIMIT)
     });
   } catch (error) {
     if (error.name === "AbortError") {
@@ -206,6 +207,14 @@ function normalizeParagraphText(value) {
 function limitWords(value, maxWords) {
   const words = cleanupText(value || "").split(/\s+/).filter(Boolean);
   return words.slice(0, maxWords).join(" ");
+}
+
+function limitCharacters(value, maxChars) {
+  const text = cleanupText(value || "");
+  if (text.length <= maxChars) return text;
+  const clipped = text.slice(0, maxChars + 1);
+  const boundary = clipped.lastIndexOf(" ");
+  return clipped.slice(0, boundary > Math.floor(maxChars * 0.84) ? boundary : maxChars).trim();
 }
 
 function decodeHtmlEntities(value) {

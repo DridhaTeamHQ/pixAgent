@@ -13,6 +13,7 @@ const screenCtx = ctx;   // permanent reference to the on-screen context
 const EXPORT_SCALE = 2;
 const IMAGE_PAN_LIMIT = 900;
 const IMAGE_PAN_HEADROOM = 1.1;
+const TEXT_DETAIL_CHAR_LIMIT = 500;
 
 /**
  * Render the poster onto an offscreen canvas at `scale`× the design size and
@@ -494,7 +495,7 @@ writeApplyBtn.addEventListener("click", async () => {
   if (!text) return;
   const detail = writeDetail.value.trim() || text;
   state.headline = text;
-  state.detailText = limitWordsClient(detail, 390);
+  state.detailText = limitDetailTextClient(detail);
   headlineEdit.value = text;
   if (detailEdit) detailEdit.value = state.detailText;
   editPanel.hidden = false;
@@ -517,7 +518,7 @@ writeHeadline.addEventListener("input", () => {
   state.headline = writeHeadline.value;
   headlineEdit.value = writeHeadline.value;
   if (!writeDetail.value.trim()) {
-    state.detailText = limitWordsClient(writeHeadline.value, 390);
+    state.detailText = limitDetailTextClient(writeHeadline.value);
     if (detailEdit) detailEdit.value = state.detailText;
   }
   setWriteStatus("");
@@ -525,7 +526,7 @@ writeHeadline.addEventListener("input", () => {
 });
 
 writeDetail.addEventListener("input", () => {
-  state.detailText = limitWordsClient(writeDetail.value || writeHeadline.value, 390);
+  state.detailText = limitDetailTextClient(writeDetail.value || writeHeadline.value);
   if (detailEdit) detailEdit.value = state.detailText;
   setWriteStatus("");
   renderPoster();
@@ -785,11 +786,11 @@ downloadButton.addEventListener("click", () => {
 // Headline live edit
 headlineEdit.addEventListener("input", () => {
   const previousManualText = writeHeadline.value;
-  const detailWasManualText = state.detailText === limitWordsClient(previousManualText, 390);
+  const detailWasManualText = state.detailText === limitDetailTextClient(previousManualText);
   state.headline = headlineEdit.value;
   writeHeadline.value = headlineEdit.value;
   if (!state.detailText || detailWasManualText || !writeDetail.value.trim()) {
-    state.detailText = limitWordsClient(headlineEdit.value, 390);
+    state.detailText = limitDetailTextClient(headlineEdit.value);
     if (detailEdit) detailEdit.value = state.detailText;
   }
   renderPoster();
@@ -797,7 +798,7 @@ headlineEdit.addEventListener("input", () => {
 
 if (detailEdit) {
   detailEdit.addEventListener("input", () => {
-    state.detailText = limitWordsClient(detailEdit.value, 390);
+    state.detailText = limitDetailTextClient(detailEdit.value);
     writeDetail.value = state.detailText;
     renderPoster();
   });
@@ -1272,7 +1273,7 @@ async function runScrape() {
 
     // Update state
     state.headline = payload.title || "";
-    state.detailText = limitWordsClient(payload.detailText || payload.articleText || payload.title || "", 390);
+    state.detailText = limitDetailTextClient(payload.detailText || payload.articleText || payload.title || "");
     state.ready = true;
 
     // Reset offsets
@@ -1677,7 +1678,7 @@ function drawPixStatusBar(scaleX, scaleY, s) {
 }
 
 function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHeight) {
-  const words = limitWordsClient(text, 390).split(/\s+/).filter(Boolean);
+  const words = limitDetailTextClient(text).split(/\s+/).filter(Boolean);
   ctx.save();
   ctx.font = `400 ${Math.round(fontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
   ctx.fillStyle = "#ffffff";
@@ -2388,7 +2389,15 @@ function makeSvgImage(svg) {
 /* ── Helpers ── */
 
 function getDetailTextForPreview() {
-  return limitWordsClient(state.detailText || state.headline || "Paste a URL or write text to build a Pix story preview.", 390);
+  return limitDetailTextClient(state.detailText || state.headline || "Paste a URL or write text to build a Pix story preview.");
+}
+
+function limitDetailTextClient(value) {
+  const text = (value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= TEXT_DETAIL_CHAR_LIMIT) return text;
+  const clipped = text.slice(0, TEXT_DETAIL_CHAR_LIMIT + 1);
+  const boundary = clipped.lastIndexOf(" ");
+  return clipped.slice(0, boundary > 420 ? boundary : TEXT_DETAIL_CHAR_LIMIT).trim();
 }
 
 function limitWordsClient(value, maxWords) {

@@ -7,6 +7,8 @@ import {
   upgradeImageToHighestQuality,
 } from "../lib/scrape.js";
 
+const TEXT_DETAIL_CHAR_LIMIT = 500;
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   setCors(res);
@@ -68,7 +70,7 @@ export default async function handler(req, res) {
       imageProxy: image ? `/api/image?url=${encodeURIComponent(image)}` : null,
       sourceUrl: targetUrl,
       articleText,
-      detailText: limitWords(articleText || metaDescription || title, 390),
+      detailText: limitCharacters(articleText || metaDescription || title, TEXT_DETAIL_CHAR_LIMIT),
     });
   } catch (err) {
     res.status(500).json({ error: err.message || "Article scrape failed." });
@@ -150,4 +152,12 @@ function normalizeParagraphText(value) {
 function limitWords(value, maxWords) {
   const words = cleanupText(value || "").split(/\s+/).filter(Boolean);
   return words.slice(0, maxWords).join(" ");
+}
+
+function limitCharacters(value, maxChars) {
+  const text = cleanupText(value || "");
+  if (text.length <= maxChars) return text;
+  const clipped = text.slice(0, maxChars + 1);
+  const boundary = clipped.lastIndexOf(" ");
+  return clipped.slice(0, boundary > Math.floor(maxChars * 0.84) ? boundary : maxChars).trim();
 }
