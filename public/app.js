@@ -47,6 +47,7 @@ const scrapeUrlInput = document.getElementById("scrape-url");
 const scrapeButton = document.getElementById("scrape-btn");
 const scrapeStatus = document.getElementById("scrape-status");
 const downloadButton = document.getElementById("download-btn");
+const textDownloadButton = document.getElementById("text-download-btn");
 const previewModeToggle = document.getElementById("preview-mode-toggle");
 const agentAuthGate = document.getElementById("agent-auth-gate");
 const agentAuthMessage = document.getElementById("agent-auth-message");
@@ -685,6 +686,54 @@ if (xDownloadBtn) xDownloadBtn.addEventListener("click", () => {
     console.error("X download failed:", error);
   }
 });
+
+if (textDownloadButton) textDownloadButton.addEventListener("click", () => {
+  const headline = (state.headline || "").trim();
+  if (!headline && !getDetailTextForPreview().trim()) {
+    setPostStatus("Build a poster first.", "error");
+    return;
+  }
+
+  textDownloadButton.disabled = true;
+  setPostStatus("Preparing Text download...");
+
+  const previousMode = state.previewMode;
+  state.isDownloading = true;
+  state.previewMode = "text";
+
+  try {
+    const exportCanvas = renderToHighResCanvas(EXPORT_SCALE);
+
+    exportCanvas.toBlob((blob) => {
+      state.isDownloading = false;
+      state.previewMode = previousMode;
+      renderPoster();
+
+      if (!blob) {
+        textDownloadButton.disabled = false;
+        setPostStatus("Couldn't render text image.", "error");
+        return;
+      }
+
+      const blobUrl = URL.createObjectURL(blob);
+      const dl = document.createElement("a");
+      dl.href = blobUrl;
+      dl.download = `${slugify(headline || "pix-post")}-text.png`;
+      dl.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      textDownloadButton.disabled = false;
+      setPostStatus("Text PNG downloaded.", "success");
+    }, "image/png");
+  } catch (error) {
+    state.isDownloading = false;
+    state.previewMode = previousMode;
+    renderPoster();
+    textDownloadButton.disabled = false;
+    setPostStatus("Couldn't render text download.", "error");
+    console.error("Text download failed:", error);
+  }
+});
+
 downloadButton.addEventListener("click", () => {
   // Flag for clean export (no preview overlays). We DO NOT re-render the
   // screen canvas — the export happens entirely on a 2× offscreen canvas
