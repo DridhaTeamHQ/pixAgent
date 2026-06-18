@@ -1572,7 +1572,8 @@ function drawPixTextScreen() {
 
   const textX = L.headline.x;
   const minTextY = H * 0.42;
-  const lastLineY = H - L.headline.bottomPadding;
+  const textToLikesGap = 126 * (H / 1700);
+  const lastLineY = H - L.headline.bottomPadding - textToLikesGap;
   drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, L.headline.maxWidth, lastLineY, 39 * s, 61 * s);
 
   drawEngagementBar();
