@@ -1584,8 +1584,8 @@ function drawPixTextScreen() {
   drawFixedLogos();
 
   const textX = L.headline.x;
-  const minTextY = state.forceTextExport ? H * 0.34 : H * 0.28;
-  const bottomTextPadding = state.forceTextExport ? L.headline.bottomPadding : 365;
+  const minTextY = state.forceTextExport ? H * 0.16 : H * 0.1;
+  const bottomTextPadding = state.forceTextExport ? L.headline.bottomPadding : 335;
   const lastLineY = H - bottomTextPadding * (H / 1700);
   drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, L.headline.maxWidth, lastLineY, 39 * s, 61 * s);
 
@@ -1693,7 +1693,6 @@ function drawPixStatusBar(scaleX, scaleY, s) {
 
 function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHeight) {
   ctx.save();
-  ctx.font = `400 ${Math.round(fontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
@@ -1702,16 +1701,8 @@ function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHei
   ctx.shadowOffsetY = 5;
 
   const preserveOpenBullet = !state.isDownloading && state.previewMode === "text";
-  const lines = buildPreviewTextLines(text, maxWidth, { preserveOpenBullet });
-  const maxBlockHeight = Math.max(lineHeight, maxY - minY + lineHeight);
-  const visibleLines = [];
-  let blockHeight = 0;
-  for (const line of lines) {
-    const step = getPreviewTextStep(line, lineHeight);
-    if (visibleLines.length && blockHeight + step > maxBlockHeight) break;
-    visibleLines.push(line);
-    blockHeight += step;
-  }
+  const fit = fitPreviewTextLines(text, maxWidth, minY, maxY, fontSize, lineHeight, { preserveOpenBullet });
+  const { lines, visibleLines } = fit;
   const overflowed = lines.length > visibleLines.length;
   let ellipsisIndex = -1;
   if (overflowed) {
@@ -1720,8 +1711,9 @@ function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHei
     visibleLines[ellipsisIndex] = `${visibleLines[ellipsisIndex]}...`;
   }
 
-  const visibleHeight = visibleLines.reduce((sum, line) => sum + getPreviewTextStep(line, lineHeight), 0);
-  const startY = Math.max(minY, maxY - Math.max(0, visibleHeight - lineHeight));
+  ctx.font = `400 ${Math.round(fit.fontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
+  const visibleHeight = visibleLines.reduce((sum, line) => sum + getPreviewTextStep(line, fit.lineHeight), 0);
+  const startY = Math.max(minY, maxY - Math.max(0, visibleHeight - fit.lineHeight));
   let cy = startY;
   visibleLines.forEach((visibleLine, index) => {
     if (visibleLine) {
@@ -1731,13 +1723,45 @@ function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHei
         ctx.fillText(visibleLine, x, cy);
       }
     }
-    cy += getPreviewTextStep(visibleLine, lineHeight);
+    cy += getPreviewTextStep(visibleLine, fit.lineHeight);
   });
   ctx.restore();
 }
 
+function fitPreviewTextLines(text, maxWidth, minY, maxY, fontSize, lineHeight, options = {}) {
+  const canShrink = state.previewMode === "text";
+  const scales = canShrink ? [1, 0.92, 0.84, 0.76, 0.68, 0.62] : [1];
+  let bestFit = null;
+
+  for (const scale of scales) {
+    const nextFontSize = Math.max(fontSize * scale, fontSize * 0.62);
+    const nextLineHeight = Math.max(nextFontSize * 1.34, lineHeight * scale);
+    ctx.font = `400 ${Math.round(nextFontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
+    const lines = buildPreviewTextLines(text, maxWidth, options);
+    const maxBlockHeight = Math.max(nextLineHeight, maxY - minY + nextLineHeight);
+    const visibleLines = getVisiblePreviewLines(lines, nextLineHeight, maxBlockHeight);
+    const fit = { fontSize: nextFontSize, lineHeight: nextLineHeight, lines, visibleLines };
+    bestFit = fit;
+    if (visibleLines.length === lines.length) return fit;
+  }
+
+  return bestFit;
+}
+
+function getVisiblePreviewLines(lines, lineHeight, maxBlockHeight) {
+  const visibleLines = [];
+  let blockHeight = 0;
+  for (const line of lines) {
+    const step = getPreviewTextStep(line, lineHeight);
+    if (visibleLines.length && blockHeight + step > maxBlockHeight) break;
+    visibleLines.push(line);
+    blockHeight += step;
+  }
+  return visibleLines.length ? visibleLines : [lines[0] || ""];
+}
+
 function getPreviewTextStep(line, lineHeight) {
-  return line ? lineHeight : lineHeight * 0.42;
+  return line ? lineHeight : lineHeight * (state.previewMode === "text" ? 0.28 : 0.42);
 }
 
 function buildPreviewTextLines(text, maxWidth, options = {}) {
