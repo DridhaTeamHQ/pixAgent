@@ -13,7 +13,6 @@ const screenCtx = ctx;   // permanent reference to the on-screen context
 const EXPORT_SCALE = 2;
 const IMAGE_PAN_LIMIT = 900;
 const IMAGE_PAN_HEADROOM = 1.1;
-const TEXT_DETAIL_CHAR_LIMIT = 500;
 
 /**
  * Render the poster onto an offscreen canvas at `scale`× the design size and
@@ -2503,11 +2502,9 @@ function handleDetailBulletEnter(event) {
   const before = nextValue.slice(0, nextStart);
   const after = nextValue.slice(nextEnd);
   const insertion = before.trim() ? "\n\n\u2022 " : "\u2022 ";
-  const available = Math.max(0, TEXT_DETAIL_CHAR_LIMIT - (nextValue.length - (nextEnd - nextStart)));
-  const safeInsertion = insertion.slice(0, available);
-  field.value = `${before}${safeInsertion}${after}`;
+  field.value = `${before}${insertion}${after}`;
 
-  const cursor = before.length + safeInsertion.length;
+  const cursor = before.length + insertion.length;
   field.setSelectionRange(cursor, cursor);
   field.dispatchEvent(new Event("input", { bubbles: true }));
 }
@@ -2519,7 +2516,7 @@ function formatDetailBulletField(field) {
 
   const cursor = field.selectionStart ?? original.length;
   const delta = formatted.length - original.length;
-  field.value = formatted.slice(0, TEXT_DETAIL_CHAR_LIMIT);
+  field.value = formatted;
   const nextCursor = Math.min(field.value.length, Math.max(0, cursor + delta));
   field.setSelectionRange(nextCursor, nextCursor);
   return field.value;
@@ -2538,18 +2535,14 @@ function formatDetailBulletText(value) {
     .map((line) => (/^[\u2022*-]\s+/.test(line) ? `\u2022 ${line.replace(/^[\u2022*-]\s+/, "")}` : `\u2022 ${line}`));
 
   let output = points.join("\n\n");
-  if ((wantsNextBullet || hasOpenBullet) && output && output.length < TEXT_DETAIL_CHAR_LIMIT - 4) {
+  if ((wantsNextBullet || hasOpenBullet) && output) {
     output = `${output}\n\n\u2022 `;
   }
   return output;
 }
 
 function limitDetailTextClient(value, options = {}) {
-  const text = normalizeDetailTextClient(value, options);
-  if (text.length <= TEXT_DETAIL_CHAR_LIMIT) return text;
-  const clipped = text.slice(0, TEXT_DETAIL_CHAR_LIMIT + 1);
-  const boundary = Math.max(clipped.lastIndexOf(" "), clipped.lastIndexOf("\n"));
-  return clipped.slice(0, boundary > 420 ? boundary : TEXT_DETAIL_CHAR_LIMIT).trim();
+  return normalizeDetailTextClient(value, options);
 }
 
 function normalizeDetailTextClient(value, { preserveOpenBullet = false } = {}) {
