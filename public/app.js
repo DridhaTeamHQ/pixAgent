@@ -525,9 +525,9 @@ writeHeadline.addEventListener("input", () => {
   renderPoster();
 });
 
-writeDetail.addEventListener("input", () => {
-  const formattedText = formatDetailBulletField(writeDetail);
-  state.detailText = limitDetailTextClient(formattedText || writeHeadline.value);
+writeDetail.addEventListener("input", (event) => {
+  const text = event.inputType === "insertLineBreak" ? formatDetailBulletField(writeDetail) : writeDetail.value;
+  state.detailText = limitDetailTextClient(text || writeHeadline.value);
   if (detailEdit) detailEdit.value = state.detailText;
   setWriteStatus("");
   renderPoster();
@@ -799,9 +799,9 @@ headlineEdit.addEventListener("input", () => {
 });
 
 if (detailEdit) {
-  detailEdit.addEventListener("input", () => {
-    const formattedText = formatDetailBulletField(detailEdit);
-    state.detailText = limitDetailTextClient(formattedText);
+  detailEdit.addEventListener("input", (event) => {
+    const text = event.inputType === "insertLineBreak" ? formatDetailBulletField(detailEdit) : detailEdit.value;
+    state.detailText = limitDetailTextClient(text);
     writeDetail.value = state.detailText;
     renderPoster();
   });
@@ -2431,8 +2431,9 @@ function makeSvgImage(svg) {
 function getDetailTextForPreview() {
   const fallback = "Paste a URL or write text to build a Pix story preview.";
   if (!state.isDownloading && state.previewMode === "text") {
-    const draftText = writeDetail?.value || detailEdit?.value || state.detailText || state.headline || fallback;
-    return limitDetailTextClient(formatDetailBulletText(draftText), { preserveOpenBullet: true });
+    const isWritingText = writeForm && !writeForm.hidden;
+    const draftText = isWritingText && writeDetail ? writeDetail.value : detailEdit?.value ?? state.detailText ?? state.headline ?? fallback;
+    return limitDetailTextClient(draftText, { preserveOpenBullet: true });
   }
 
   return limitDetailTextClient(state.detailText || state.headline || fallback);
