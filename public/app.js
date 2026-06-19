@@ -1584,8 +1584,8 @@ function drawPixTextScreen() {
   drawFixedLogos();
 
   const textX = L.headline.x;
-  const minTextY = H * 0.42;
-  const bottomTextPadding = state.forceTextExport ? L.headline.bottomPadding : 430;
+  const minTextY = state.forceTextExport ? H * 0.34 : H * 0.28;
+  const bottomTextPadding = state.forceTextExport ? L.headline.bottomPadding : 365;
   const lastLineY = H - bottomTextPadding * (H / 1700);
   drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, L.headline.maxWidth, lastLineY, 39 * s, 61 * s);
 
@@ -1703,8 +1703,15 @@ function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHei
 
   const preserveOpenBullet = !state.isDownloading && state.previewMode === "text";
   const lines = buildPreviewTextLines(text, maxWidth, { preserveOpenBullet });
-  const availableLines = Math.max(1, Math.floor((maxY - minY) / lineHeight) + 1);
-  const visibleLines = lines.slice(0, availableLines);
+  const maxBlockHeight = Math.max(lineHeight, maxY - minY + lineHeight);
+  const visibleLines = [];
+  let blockHeight = 0;
+  for (const line of lines) {
+    const step = getPreviewTextStep(line, lineHeight);
+    if (visibleLines.length && blockHeight + step > maxBlockHeight) break;
+    visibleLines.push(line);
+    blockHeight += step;
+  }
   const overflowed = lines.length > visibleLines.length;
   let ellipsisIndex = -1;
   if (overflowed) {
@@ -1713,17 +1720,24 @@ function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHei
     visibleLines[ellipsisIndex] = `${visibleLines[ellipsisIndex]}...`;
   }
 
-  const startY = Math.max(minY, maxY - (visibleLines.length - 1) * lineHeight);
+  const visibleHeight = visibleLines.reduce((sum, line) => sum + getPreviewTextStep(line, lineHeight), 0);
+  const startY = Math.max(minY, maxY - Math.max(0, visibleHeight - lineHeight));
+  let cy = startY;
   visibleLines.forEach((visibleLine, index) => {
-    const cy = startY + index * lineHeight;
-    if (!visibleLine) return;
-    if (index === ellipsisIndex) {
-      drawEllipsizedLine(visibleLine, x, cy, maxWidth);
-      return;
+    if (visibleLine) {
+      if (index === ellipsisIndex) {
+        drawEllipsizedLine(visibleLine, x, cy, maxWidth);
+      } else {
+        ctx.fillText(visibleLine, x, cy);
+      }
     }
-    ctx.fillText(visibleLine, x, cy);
+    cy += getPreviewTextStep(visibleLine, lineHeight);
   });
   ctx.restore();
+}
+
+function getPreviewTextStep(line, lineHeight) {
+  return line ? lineHeight : lineHeight * 0.42;
 }
 
 function buildPreviewTextLines(text, maxWidth, options = {}) {
