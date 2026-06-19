@@ -526,11 +526,13 @@ writeHeadline.addEventListener("input", () => {
 });
 
 writeDetail.addEventListener("input", () => {
-  state.detailText = limitDetailTextClient(writeDetail.value || writeHeadline.value);
+  const formattedText = formatDetailBulletField(writeDetail);
+  state.detailText = limitDetailTextClient(formattedText || writeHeadline.value);
   if (detailEdit) detailEdit.value = state.detailText;
   setWriteStatus("");
   renderPoster();
 });
+writeDetail.addEventListener("keydown", handleDetailBulletEnter);
 
 scrapeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -798,10 +800,12 @@ headlineEdit.addEventListener("input", () => {
 
 if (detailEdit) {
   detailEdit.addEventListener("input", () => {
-    state.detailText = limitDetailTextClient(detailEdit.value);
+    const formattedText = formatDetailBulletField(detailEdit);
+    state.detailText = limitDetailTextClient(formattedText);
     writeDetail.value = state.detailText;
     renderPoster();
   });
+  detailEdit.addEventListener("keydown", handleDetailBulletEnter);
 }
 
 // Image offset sliders
@@ -1688,7 +1692,6 @@ function drawPixStatusBar(scaleX, scaleY, s) {
 }
 
 function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHeight) {
-  const words = limitDetailTextClient(text).split(/\s+/).filter(Boolean);
   ctx.save();
   ctx.font = `400 ${Math.round(fontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
   ctx.fillStyle = "#ffffff";
@@ -1698,32 +1701,23 @@ function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHei
   ctx.shadowBlur = 14;
   ctx.shadowOffsetY = 5;
 
-  let line = "";
-  const lines = [];
-  for (let i = 0; i < words.length; i += 1) {
-    const test = line ? `${line} ${words[i]}` : words[i];
-    if (ctx.measureText(test).width <= maxWidth) {
-      line = test;
-      continue;
-    }
-
-    lines.push(line);
-    line = words[i];
-  }
-
-  if (line) lines.push(line);
-
+  const preserveOpenBullet = !state.isDownloading && state.previewMode === "text";
+  const lines = buildPreviewTextLines(text, maxWidth, { preserveOpenBullet });
   const availableLines = Math.max(1, Math.floor((maxY - minY) / lineHeight) + 1);
   const visibleLines = lines.slice(0, availableLines);
   const overflowed = lines.length > visibleLines.length;
+  let ellipsisIndex = -1;
   if (overflowed) {
-    visibleLines[visibleLines.length - 1] = `${visibleLines[visibleLines.length - 1]}...`;
+    ellipsisIndex = visibleLines.length - 1;
+    while (ellipsisIndex > 0 && !visibleLines[ellipsisIndex]) ellipsisIndex -= 1;
+    visibleLines[ellipsisIndex] = `${visibleLines[ellipsisIndex]}...`;
   }
 
   const startY = Math.max(minY, maxY - (visibleLines.length - 1) * lineHeight);
   visibleLines.forEach((visibleLine, index) => {
     const cy = startY + index * lineHeight;
-    if (overflowed && index === visibleLines.length - 1) {
+    if (!visibleLine) return;
+    if (index === ellipsisIndex) {
       drawEllipsizedLine(visibleLine, x, cy, maxWidth);
       return;
     }
@@ -1732,8 +1726,44 @@ function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHei
   ctx.restore();
 }
 
+function buildPreviewTextLines(text, maxWidth, options = {}) {
+  const sourceLines = limitDetailTextClient(text, options).split("\n");
+  const lines = [];
+  sourceLines.forEach((sourceLine) => {
+    const trimmed = sourceLine.trim();
+    if (!trimmed) {
+      if (lines.length && lines[lines.length - 1] !== "") lines.push("");
+      return;
+    }
+
+    const lineText = /^[\u2022*-]\s+/.test(trimmed) ? `\u2022 ${trimmed.replace(/^[\u2022*-]\s+/, "")}` : trimmed;
+    lines.push(...wrapPreviewTextLine(lineText, maxWidth));
+  });
+
+  return lines.length ? lines : [""];
+}
+
+function wrapPreviewTextLine(text, maxWidth) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  words.forEach((word) => {
+    const test = line ? `${line} ${word}` : word;
+    if (!line || ctx.measureText(test).width <= maxWidth) {
+      line = test;
+      return;
+    }
+
+    lines.push(line);
+    line = word;
+  });
+
+  if (line) lines.push(line);
+  return lines;
+}
+
 function drawEllipsizedLine(line, x, y, maxWidth) {
-  let output = `${line}...`;
+  let output = line.endsWith("...") ? line : `${line}...`;
   while (output.length > 4 && ctx.measureText(output).width > maxWidth) {
     output = `${output.slice(0, -4).trimEnd()}...`;
   }
@@ -2399,15 +2429,104 @@ function makeSvgImage(svg) {
 /* ── Helpers ── */
 
 function getDetailTextForPreview() {
-  return limitDetailTextClient(state.detailText || state.headline || "Paste a URL or write text to build a Pix story preview.");
+  const fallback = "Paste a URL or write text to build a Pix story preview.";
+  if (!state.isDownloading && state.previewMode === "text") {
+    const draftText = writeDetail?.value || detailEdit?.value || state.detailText || state.headline || fallback;
+    return limitDetailTextClient(formatDetailBulletText(draftText), { preserveOpenBullet: true });
+  }
+
+  return limitDetailTextClient(state.detailText || state.headline || fallback);
 }
 
-function limitDetailTextClient(value) {
-  const text = (value || "").replace(/\s+/g, " ").trim();
+function handleDetailBulletEnter(event) {
+  if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+
+  const field = event.currentTarget;
+  const value = field.value || "";
+  const selectionStart = field.selectionStart ?? value.length;
+  const selectionEnd = field.selectionEnd ?? selectionStart;
+  const lineStart = value.lastIndexOf("\n", Math.max(0, selectionStart - 1)) + 1;
+  const currentLine = value.slice(lineStart, selectionStart);
+  const currentLineText = currentLine.trim();
+  const shouldBulletCurrentLine = currentLineText && !/^[\u2022*-]\s+/.test(currentLineText);
+
+  event.preventDefault();
+
+  let nextValue = value;
+  let nextStart = selectionStart;
+  let nextEnd = selectionEnd;
+  if (shouldBulletCurrentLine) {
+    nextValue = `${value.slice(0, lineStart)}\u2022 ${value.slice(lineStart)}`;
+    nextStart += 2;
+    nextEnd += 2;
+  }
+
+  const before = nextValue.slice(0, nextStart);
+  const after = nextValue.slice(nextEnd);
+  const insertion = before.trim() ? "\n\n\u2022 " : "\u2022 ";
+  const available = Math.max(0, TEXT_DETAIL_CHAR_LIMIT - (nextValue.length - (nextEnd - nextStart)));
+  const safeInsertion = insertion.slice(0, available);
+  field.value = `${before}${safeInsertion}${after}`;
+
+  const cursor = before.length + safeInsertion.length;
+  field.setSelectionRange(cursor, cursor);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function formatDetailBulletField(field) {
+  const original = field.value || "";
+  const formatted = formatDetailBulletText(original);
+  if (formatted === original) return original;
+
+  const cursor = field.selectionStart ?? original.length;
+  const delta = formatted.length - original.length;
+  field.value = formatted.slice(0, TEXT_DETAIL_CHAR_LIMIT);
+  const nextCursor = Math.min(field.value.length, Math.max(0, cursor + delta));
+  field.setSelectionRange(nextCursor, nextCursor);
+  return field.value;
+}
+
+function formatDetailBulletText(value) {
+  const normalized = (value || "").replace(/\r\n?/g, "\n");
+  if (!normalized.trim()) return normalized;
+
+  const wantsNextBullet = /\n$/.test(normalized);
+  const hasOpenBullet = /(?:^|\n)\s*[\u2022*-]\s*$/.test(normalized);
+  const points = normalized
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^[\u2022*-]\s*$/.test(line))
+    .map((line) => (/^[\u2022*-]\s+/.test(line) ? `\u2022 ${line.replace(/^[\u2022*-]\s+/, "")}` : `\u2022 ${line}`));
+
+  let output = points.join("\n\n");
+  if ((wantsNextBullet || hasOpenBullet) && output && output.length < TEXT_DETAIL_CHAR_LIMIT - 4) {
+    output = `${output}\n\n\u2022 `;
+  }
+  return output;
+}
+
+function limitDetailTextClient(value, options = {}) {
+  const text = normalizeDetailTextClient(value, options);
   if (text.length <= TEXT_DETAIL_CHAR_LIMIT) return text;
   const clipped = text.slice(0, TEXT_DETAIL_CHAR_LIMIT + 1);
-  const boundary = clipped.lastIndexOf(" ");
+  const boundary = Math.max(clipped.lastIndexOf(" "), clipped.lastIndexOf("\n"));
   return clipped.slice(0, boundary > 420 ? boundary : TEXT_DETAIL_CHAR_LIMIT).trim();
+}
+
+function normalizeDetailTextClient(value, { preserveOpenBullet = false } = {}) {
+  const lines = (value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trimEnd());
+
+  while (!preserveOpenBullet && lines.length && /^[\u2022*-]\s*$/.test(lines[lines.length - 1].trim())) {
+    lines.pop();
+  }
+
+  return lines
+    .join("\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
 }
 
 function limitWordsClient(value, maxWords) {
