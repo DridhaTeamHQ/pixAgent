@@ -1530,8 +1530,72 @@ async function handleGenerateArticle(req, res) {
   }
 }
 
-/* ── OpenAI — gpt-image-1 background enhance ──
-   Local-dev mirror of api/upscale-image.js. */
+/* ── OpenAI — context-aware, identity-preserving background enhance ──
+   Local-dev mirror of api/upscale-image.js. Two stages:
+     1. gpt-4o-mini vision describes the photo (people, faces, text, setting)
+     2. gpt-image-1 (quality=high, input_fidelity=high) enhances with that
+        description embedded so it knows what it must NOT change. */
+
+const VISION_PROMPT =
+  "You are assisting a photo-restoration pipeline for a news organisation. " +
+  "Describe this photograph in 2-4 sentences, factually and precisely: the people " +
+  "(count, apparent age, facial hair, glasses, expressions, clothing), any visible text, " +
+  "logos or signage (quote them exactly), the setting, and the lighting. " +
+  "Do NOT guess names. Output only the description.";
+
+function buildEnhancePrompt(description, headline) {
+  return [
+    "Professional photo restoration of a REAL news photograph.",
+    description ? `CONTEXT — the photo shows: ${description}` : "",
+    headline ? `It accompanies this news story: "${headline}".` : "",
+    "",
+    "TASK: upscale and enhance only — recover fine detail, increase sharpness,",
+    "remove compression artifacts and noise, correct exposure and colour balance.",
+    "",
+    "ABSOLUTE RULES:",
+    "- Every person's face must stay PIXEL-FAITHFUL to the original identity:",
+    "  same facial structure, skin texture, wrinkles, expression and age.",
+    "  Do NOT beautify, smooth skin, or idealise anyone.",
+    "- Reproduce all text, logos and signage exactly as written.",
+    "- Identical composition, framing, colours and content.",
+    "- Add nothing. Remove nothing. This is journalism, not art.",
+  ].filter(Boolean).join("\n");
+}
+
+async function describeImageForEnhance(buffer, mime) {
+  try {
+    const dataUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openaiApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: VISION_PROMPT },
+            { type: "image_url", image_url: { url: dataUrl, detail: "low" } },
+          ],
+        }],
+        temperature: 0.2,
+        max_tokens: 220,
+      }),
+    });
+    if (!r.ok) {
+      console.warn(`⚠ vision describe failed (${r.status}) — enhancing without context`);
+      return "";
+    }
+    const data = await r.json();
+    return (data?.choices?.[0]?.message?.content || "").trim();
+  } catch (e) {
+    console.warn("⚠ vision describe error — enhancing without context:", e.message);
+    return "";
+  }
+}
+
 async function handleUpscaleImage(req, res) {
   if (!openaiApiKey) {
     sendJson(res, 503, { error: "OPENAI_API_KEY not set on server." });
@@ -1552,11 +1616,12 @@ async function handleUpscaleImage(req, res) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks);
-    if (buffer.length < 100) {
+    if (buffer.length < 1000) {
       sendJson(res, 400, { error: "Empty or invalid image body." });
       return;
     }
     const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
+    const headline = decodeURIComponent(req.headers["x-headline"] || "").trim().slice(0, 200);
 
     const sizeHint = (req.headers["x-image-orientation"] || "").toString();
     const size =
@@ -1564,20 +1629,24 @@ async function handleUpscaleImage(req, res) {
       sizeHint === "portrait"  ? "1024x1536" :
       "auto";
 
-    // Cost-effective: gpt-image-1 quality drives ~15× the price
-    //   low ≈ $0.016   medium ≈ $0.06   high ≈ $0.25   (per 1024×1536)
-    // Background sits behind a gradient + headline, so "low" is plenty.
-    // Override via IMAGE_QUALITY env (low | medium | high).
-    const quality = (process.env.IMAGE_QUALITY || "low").toLowerCase();
-
-    const form = new FormData();
-    form.append("model", "gpt-image-1");
-    form.append("prompt", "Enhance this news photograph: increase sharpness, detail and clarity, remove compression artifacts and noise, improve lighting and colour balance. Keep the content, composition, faces, text and all elements EXACTLY identical to the original. Do not add, remove or alter anything.");
-    form.append("size", size);
-    form.append("quality", quality);
-    form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
+    // Identity preservation beats cost for news photos — default high.
+    const quality = (process.env.IMAGE_QUALITY || "high").toLowerCase();
 
     const t0 = Date.now();
+
+    // Stage 1 — understand the image (cheap, fails soft)
+    const description = await describeImageForEnhance(buffer, mime);
+    if (description) console.log(`✓ vision context (${Date.now() - t0}ms): ${description.slice(0, 140)}…`);
+
+    // Stage 2 — context-aware enhancement
+    const form = new FormData();
+    form.append("model", "gpt-image-1");
+    form.append("prompt", buildEnhancePrompt(description, headline));
+    form.append("size", size);
+    form.append("quality", quality);
+    form.append("input_fidelity", "high");   // OpenAI's face/identity preservation control
+    form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
+
     const aiRes = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
       headers: { "Authorization": `Bearer ${openaiApiKey}` },
@@ -1598,8 +1667,8 @@ async function handleUpscaleImage(req, res) {
       return;
     }
 
-    console.log(`✓ AI enhance done in ${Date.now() - t0}ms`);
-    sendJson(res, 200, { image: `data:image/png;base64,${b64}` });
+    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (quality=${quality})`);
+    sendJson(res, 200, { image: `data:image/png;base64,${b64}`, context: description });
   } catch (err) {
     console.error("✗ upscale-image error:", err);
     sendJson(res, 500, { error: err.message || "Image enhance failed." });

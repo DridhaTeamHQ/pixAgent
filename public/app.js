@@ -2754,7 +2754,7 @@ if (aiEnhanceBtn) {
 
     aiEnhanceBtn.disabled = true;
     aiEnhanceBtn.classList.add("working");
-    setEnhanceStatus("Enhancing with AI — takes 15–30s…");
+    setEnhanceStatus("Enhancing with AI — analysing photo, then rebuilding detail (30–90s)…");
 
     try {
       // Snapshot the current background to a temp canvas, capped at 1536 on
@@ -2775,6 +2775,9 @@ if (aiEnhanceBtn) {
         headers: {
           "Content-Type": "image/png",
           "X-Image-Orientation": rawW >= rawH ? "landscape" : "portrait",
+          // Story context helps the vision stage understand what the photo
+          // shows, which sharpens the "preserve exactly this" instructions.
+          "X-Headline": encodeURIComponent((state.headline || "").slice(0, 200)),
         },
         body: blob,
       });
