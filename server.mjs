@@ -1564,12 +1564,17 @@ async function handleUpscaleImage(req, res) {
       sizeHint === "portrait"  ? "1024x1536" :
       "auto";
 
+    // Cost-effective: gpt-image-1 quality drives ~15× the price
+    //   low ≈ $0.016   medium ≈ $0.06   high ≈ $0.25   (per 1024×1536)
+    // Background sits behind a gradient + headline, so "low" is plenty.
+    // Override via IMAGE_QUALITY env (low | medium | high).
+    const quality = (process.env.IMAGE_QUALITY || "low").toLowerCase();
+
     const form = new FormData();
     form.append("model", "gpt-image-1");
     form.append("prompt", "Enhance this news photograph: increase sharpness, detail and clarity, remove compression artifacts and noise, improve lighting and colour balance. Keep the content, composition, faces, text and all elements EXACTLY identical to the original. Do not add, remove or alter anything.");
     form.append("size", size);
-    form.append("quality", "high");
-    form.append("input_fidelity", "high");
+    form.append("quality", quality);
     form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
     const t0 = Date.now();

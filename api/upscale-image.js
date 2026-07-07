@@ -48,12 +48,17 @@ export default async function handler(req, res) {
       sizeHint === "portrait"  ? "1024x1536" :
       "auto";
 
+    // Cost-effective defaults. gpt-image-1 quality drives ~15× the price:
+    //   low ≈ $0.016   medium ≈ $0.06   high ≈ $0.25   (per 1024×1536)
+    // The background sits behind a dark gradient + headline, so "low" is
+    // plenty. Override via IMAGE_QUALITY env (low | medium | high).
+    const quality = (process.env.IMAGE_QUALITY || "low").toLowerCase();
+
     const form = new FormData();
     form.append("model", "gpt-image-1");
     form.append("prompt", ENHANCE_PROMPT);
     form.append("size", size);
-    form.append("quality", "high");
-    form.append("input_fidelity", "high");   // preserve faces/details as much as the model allows
+    form.append("quality", quality);
     form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
     const t0 = Date.now();
