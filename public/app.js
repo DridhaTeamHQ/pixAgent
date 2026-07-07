@@ -2804,3 +2804,28 @@ if (aiEnhanceBtn) {
     }
   });
 }
+
+/* ── Theme toggle (dark default; persisted in localStorage) ── */
+(function initThemeToggle() {
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+
+  const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("pix-theme", theme);
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute("content", theme === "dark" ? "#0b0a13" : "#eeecf7");
+    }
+    btn.setAttribute("aria-label", theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
+  }
+
+  // Sync meta/aria with whatever the head bootstrap already applied
+  applyTheme(document.documentElement.dataset.theme || "dark");
+
+  btn.addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+  });
+})();

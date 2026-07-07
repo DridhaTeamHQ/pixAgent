@@ -1802,3 +1802,127 @@ textarea:focus {
   .aurora i { filter: blur(60px); opacity: 0.4; }
   body::after { opacity: 0.35; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   DARK THEME — default. Light stays available via the navbar toggle
+   (documentElement[data-theme] is set before paint by an inline
+   script in <head>; choice persists in localStorage "pix-theme").
+   Everything token-based flips automatically; the handful of
+   literal light values are overridden below.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+:root[data-theme="dark"] {
+  --bg-color: #0b0a13;
+  --surface: rgba(20, 19, 30, 0.86);
+  --surface-2: #16151f;
+  --surface-input: rgba(255, 255, 255, 0.055);
+  --surface-card: rgba(255, 255, 255, 0.035);
+
+  --hairline:    rgba(255, 255, 255, 0.10);
+  --hairline-2:  rgba(255, 255, 255, 0.06);
+  --hover-tint:  rgba(255, 255, 255, 0.05);
+  --press-tint:  rgba(255, 255, 255, 0.10);
+  --sunken:      rgba(0, 0, 0, 0.30);
+
+  --text-primary:   #f1effa;
+  --text-secondary: #a3a0c0;
+  --text-muted:     #625f80;
+
+  --accent: #a78bfa;
+  --accent-dim: #c9b4ff;        /* "readable accent" — light on dark */
+  --accent-deep: #818cf8;
+  --accent-soft: rgba(167, 139, 250, 0.16);
+  --accent-glow: rgba(167, 139, 250, 0.26);
+  --iris: #f0abfc;
+
+  --green: #34d399;
+  --green-soft: rgba(52, 211, 153, 0.14);
+  --red: #fb7185;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.55);
+}
+
+/* ── Literal light values that need explicit dark counterparts ── */
+
+:root[data-theme="dark"] .app-nav {
+  background: rgba(11, 10, 19, 0.85);
+}
+
+:root[data-theme="dark"] .glass-panel {
+  background: rgba(20, 19, 30, 0.8);
+}
+
+:root[data-theme="dark"] h1 {
+  background: linear-gradient(155deg, #ffffff 0%, #d8c6ff 55%, #a78bfa 100%);
+  -webkit-background-clip: text;
+}
+
+:root[data-theme="dark"] .canvas-container {
+  background:
+    radial-gradient(ellipse 65% 55% at 50% 40%, rgba(167, 139, 250, 0.06) 0%, transparent 70%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.25) 0%, rgba(0, 0, 0, 0.4) 100%);
+  box-shadow: inset 0 1px 8px rgba(0, 0, 0, 0.3);
+}
+
+:root[data-theme="dark"] canvas {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+:root[data-theme="dark"] input[type="range"] {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Grain: white noise reads correctly on a dark base */
+:root[data-theme="dark"] body::after {
+  opacity: 0.3;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Aurora pastels glow harder on ink — pull the opacity back a touch */
+:root[data-theme="dark"] .aurora i { opacity: 0.5; }
+
+/* Mobile bottom sheet */
+:root[data-theme="dark"] .edit-sheet {
+  background: rgba(17, 16, 26, 0.97);
+  box-shadow: 0 -16px 44px rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="dark"] .edit-sheet > .sheet-handle {
+  background: rgba(17, 16, 26, 0.94);
+}
+:root[data-theme="dark"] .sheet-handle-pill {
+  background: rgba(255, 255, 255, 0.22);
+}
+:root[data-theme="dark"] .sheet-handle:active .sheet-handle-pill {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* ── Navbar theme toggle ── */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  background: var(--surface-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.theme-toggle:hover {
+  color: var(--text-primary);
+  background: var(--press-tint);
+  transform: rotate(-12deg);
+}
+
+/* Show the icon for the theme you'd switch TO */
+.theme-toggle .icon-sun  { display: none; }
+.theme-toggle .icon-moon { display: block; }
+:root[data-theme="dark"] .theme-toggle .icon-sun  { display: block; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
