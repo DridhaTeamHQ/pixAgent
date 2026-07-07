@@ -738,6 +738,11 @@ async function handleScrapeArticle(req, res) {
     const metaDescription = extractMetaContent(html, ["og:description", "twitter:description", "description"]);
     const articleText = extractArticleText(html, title);
 
+    // Entity-focused image search query via gpt-4o-mini (fail-soft). The old
+    // client-side keyword extractor produced garbage like "KARAN JOHARS
+    // DHARMA PRODUCTIONS SEALS" → sports photos for a Bollywood story.
+    const imageQuery = await buildImageSearchQuery(title, articleText);
+
     sendJson(res, 200, {
       title: cleanupText(title),
       image: image || null,
@@ -745,9 +750,45 @@ async function handleScrapeArticle(req, res) {
       sourceUrl: targetUrl,
       articleText,
       detailText: limitCharacters(articleText || metaDescription || title, TEXT_DETAIL_CHAR_LIMIT),
+      imageQuery,
     });
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Article scrape failed." });
+  }
+}
+
+/* Ask gpt-4o-mini for a 3-6 word image-search query: the names/entities a
+   photo editor would search for. ~$0.0001, fails soft to "". */
+async function buildImageSearchQuery(title, articleText = "") {
+  if (!openaiApiKey || !title) return "";
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openaiApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{
+          role: "user",
+          content:
+            "You pick image-search queries for news posters. Given the story below, output ONLY a 3-6 word search query — the specific people, places or things a photo editor would search to find a fitting photo. Prefer full person names. No numbers, currencies, quotes or filler words.\n\n" +
+            `Headline: ${title}\n` +
+            (articleText ? `Article: ${articleText.slice(0, 500)}` : ""),
+        }],
+        temperature: 0.2,
+        max_tokens: 24,
+      }),
+    });
+    if (!r.ok) return "";
+    const data = await r.json();
+    const q = (data?.choices?.[0]?.message?.content || "")
+      .replace(/["'\n]/g, " ").replace(/\s+/g, " ").trim();
+    if (q) console.log(`✓ image query: "${q}"`);
+    return q.slice(0, 80);
+  } catch {
+    return "";
   }
 }
 
@@ -1183,11 +1224,24 @@ function scoreArticleParagraph(text, title = "") {
 
   const sentenceCount = (text.match(/[.!?](?:\s|$)/g) || []).length;
   const hasNewsTerms = /\b(said|according|reported|minister|police|court|government|company|team|match|official|source|agency|statement)\b/i.test(text);
-  return Math.min(text.length, 320) + sentenceCount * 35 + (hasNewsTerms ? 80 : 0);
+
+  // Relevance: paragraphs that mention the story's own proper nouns (from
+  // the title) far outrank generic page copy like author bios. "Ranbir
+  // Kapoor" appearing in a paragraph is a much stronger signal than length.
+  let overlapBonus = 0;
+  if (title) {
+    const titleNouns = (title.match(/\b[A-Z][a-zA-Z''-]{3,}\b/g) || [])
+      .map((w) => w.toLowerCase())
+      .filter((w, i, a) => a.indexOf(w) === i);
+    const hits = titleNouns.filter((n) => normalized.includes(n)).length;
+    overlapBonus = Math.min(hits, 3) * 140;
+  }
+
+  return Math.min(text.length, 320) + sentenceCount * 35 + (hasNewsTerms ? 80 : 0) + overlapBonus;
 }
 
 function isBoilerplateParagraph(normalized) {
-  return /\b(privacy policy|cookie policy|cookies|terms of use|sign in|sign up|subscribe|subscription|advertisement|sponsored|newsletter|all rights reserved|copyright|follow us|read more|related stories|enable javascript|disable ad blocker|allow notifications|manage settings|accept all|our privacy policy has been revised|please review updated privacy policy)\b/i.test(normalized);
+  return /\b(privacy policy|cookie policy|cookies|terms of use|sign in|sign up|subscribe|subscription|advertisement|sponsored|newsletter|all rights reserved|copyright|follow us|read more|related stories|enable javascript|disable ad blocker|allow notifications|manage settings|accept all|our privacy policy has been revised|please review updated privacy policy|news desk|entertainment desk|sports desk|is a dynamic and dedicated team|team of journalists|bring the pulse|about the author|written by|contributed to this report|catch all the|stay updated with|download the app|for more (?:updates|news)|end of article)\b/i.test(normalized);
 }
 
 function limitWords(value, maxWords) {

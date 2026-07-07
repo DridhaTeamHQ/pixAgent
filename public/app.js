@@ -1321,7 +1321,7 @@ async function runScrape() {
     setStatus(`Done! Poster ready — edit below, then download.`, "success");
 
     // Fetch recommended stock images in the background
-    fetchStockImages(payload.title);
+    fetchStockImages(payload.title, { smartQuery: payload.imageQuery || "" });
   } catch (error) {
     setStatus(error.message || "Unable to scrape that article.", "error");
   } finally {
@@ -1331,14 +1331,16 @@ async function runScrape() {
 }
 
 async function fetchStockImages(headline, options = {}) {
-  const { autoApplyFirst = false, autoApplyRandom = false, onStatus = null } = options;
+  const { autoApplyFirst = false, autoApplyRandom = false, onStatus = null, smartQuery = "" } = options;
   const selectionNonceAtStart = state.imageSelectionNonce;
   const report = (message, type) => {
     if (typeof onStatus === "function") onStatus(message, type);
   };
 
   try {
-    // 1. Extract proper search keywords from the headline instead of passing a long sentence
+    // 1. Preferred: the AI-generated entity query from the scrape (e.g.
+    //    "Karan Johar Ranbir Kapoor Ramayana"). Fallback: naive keyword
+    //    extraction from the headline (write-mode has no scrape payload).
     const STOP = new Set(["THE", "A", "AN", "AND", "OR", "BUT", "FOR", "WITH", "FROM", "THAT", "THIS",
       "WILL", "WOULD", "SHOULD", "COULD", "SAYS", "SAID", "AFTER", "BEFORE", "ABOUT",
       "HAVE", "HAS", "HAD", "WAS", "WERE", "ARE", "IS", "BEEN", "INTO", "OVER", "UNDER",
@@ -1349,8 +1351,9 @@ async function fetchStockImages(headline, options = {}) {
     const words = headline.toUpperCase().replace(/[^A-Z0-9\s]/g, "").split(/\s+/).filter(Boolean);
     const keywords = words.filter(w => !STOP.has(w) && w.length > 2).slice(0, 5); // Take top 5 meaningful words
 
-    // Fallback to exactly 40 chars of the headline if keyword extraction fails.
-    let searchQuery = keywords.length > 0 ? keywords.join(" ") : headline.slice(0, 40);
+    let searchQuery = smartQuery
+      || (keywords.length > 0 ? keywords.join(" ") : headline.slice(0, 40));
+    if (smartQuery) console.log(`[images] using AI query: "${smartQuery}"`);
     const imageContext = buildProductImageContext(state.productImageAnalysis);
     const imageSearchTerms = buildProductSearchTerms(state.productImageAnalysis);
     if (imageSearchTerms) {
