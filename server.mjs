@@ -1481,7 +1481,7 @@ const EDITORIAL_SYSTEM_PROMPT = [
   "",
   "FORMAT RULES:",
   "1. headline: max 60 characters. Newspaper style. Correct sentence capitalisation (capitalise first word and proper nouns only). No repeated phrases from the bullets. No periods in initials (write PM, US, UK — never P.M., U.S.).",
-  "2. bullets: exactly 4 single-line bullet points covering the most important parts of the news. Each one short enough to read in a glance. Do not repeat the headline's phrasing.",
+  "2. bullets: exactly 4 bullet points covering the most important parts of the news. Each bullet should be about TWO lines of text — 20 to 32 words with real substance: what happened plus who/where/the key figure or consequence. Not a one-line fragment, not a paragraph. Do not repeat the headline's phrasing.",
   "3. tweet: within 280 characters. No dashes of any kind. British English spelling (organise, colour, labour). Facts first — lead with what happened, not opinion. May end with 1-2 relevant hashtags if room allows.",
   "",
   "EDITORIAL RULES:",
