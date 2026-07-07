@@ -1597,23 +1597,40 @@ const VISION_PROMPT =
   "logos or signage (quote them exactly), the setting, and the lighting. " +
   "Do NOT guess names. Output only the description.";
 
-function buildEnhancePrompt(description, headline) {
+function buildEnhancePrompt(description, headline, ratioLabel) {
   return [
     "Professional photo restoration of a REAL news photograph.",
     description ? `CONTEXT — the photo shows: ${description}` : "",
     headline ? `It accompanies this news story: "${headline}".` : "",
     "",
-    "TASK: upscale and enhance only — recover fine detail, increase sharpness,",
+    "TASK: upscale and enhance — recover fine detail, increase sharpness,",
     "remove compression artifacts and noise, correct exposure and colour balance.",
+    ratioLabel
+      ? `The output canvas is ${ratioLabel}. If the original photo has a different shape, EXTEND the scene naturally (continue the background/setting) to fill the ${ratioLabel} frame — keep the main subject fully visible, at the same relative scale, never cropped, stretched or distorted.`
+      : "",
     "",
     "ABSOLUTE RULES:",
     "- Every person's face must stay PIXEL-FAITHFUL to the original identity:",
     "  same facial structure, skin texture, wrinkles, expression and age.",
     "  Do NOT beautify, smooth skin, or idealise anyone.",
     "- Reproduce all text, logos and signage exactly as written.",
-    "- Identical composition, framing, colours and content.",
-    "- Add nothing. Remove nothing. This is journalism, not art.",
+    "- The original content itself is unchanged — only the surrounding scene",
+    "  may be extended to fill the frame. Add no new people or objects of",
+    "  interest. This is journalism, not art.",
   ].filter(Boolean).join("\n");
+}
+
+// Map the poster's aspect ratio to the closest gpt-image output size.
+function sizeForRatio(ratio, orientationHint) {
+  switch (ratio) {
+    case "9:16":
+    case "4:5":  return "1024x1536";
+    case "1:1":  return "1024x1024";
+    case "16:9": return "1536x1024";
+  }
+  if (orientationHint === "landscape") return "1536x1024";
+  if (orientationHint === "portrait")  return "1024x1536";
+  return "auto";
 }
 
 async function describeImageForEnhance(buffer, mime) {
@@ -1677,11 +1694,12 @@ async function handleUpscaleImage(req, res) {
     const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
     const headline = decodeURIComponent(req.headers["x-headline"] || "").trim().slice(0, 200);
 
+    // The SELECTED POSTER RATIO drives the output size, so a 9:16 poster
+    // gets a portrait image (outpainted if the source is landscape) instead
+    // of a landscape image that the canvas then crops to shreds.
+    const posterRatio = (req.headers["x-poster-ratio"] || "").toString();
     const sizeHint = (req.headers["x-image-orientation"] || "").toString();
-    const size =
-      sizeHint === "landscape" ? "1536x1024" :
-      sizeHint === "portrait"  ? "1024x1536" :
-      "auto";
+    const size = sizeForRatio(posterRatio, sizeHint);
 
     // Identity preservation beats cost for news photos — default high.
     const quality = (process.env.IMAGE_QUALITY || "high").toLowerCase();
@@ -1692,24 +1710,37 @@ async function handleUpscaleImage(req, res) {
     const description = await describeImageForEnhance(buffer, mime);
     if (description) console.log(`✓ vision context (${Date.now() - t0}ms): ${description.slice(0, 140)}…`);
 
-    // Stage 2 — context-aware enhancement
-    const form = new FormData();
-    form.append("model", "gpt-image-1");
-    form.append("prompt", buildEnhancePrompt(description, headline));
-    form.append("size", size);
-    form.append("quality", quality);
-    form.append("input_fidelity", "high");   // OpenAI's face/identity preservation control
-    form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
+    // Stage 2 — context-aware enhancement.
+    // gpt-image-1.5 first; automatic fallback to gpt-image-1 if the account
+    // doesn't have the newer model.
+    const prompt = buildEnhancePrompt(description, headline, posterRatio);
+    const callEdit = async (model) => {
+      const form = new FormData();
+      form.append("model", model);
+      form.append("prompt", prompt);
+      form.append("size", size);
+      form.append("quality", quality);
+      form.append("input_fidelity", "high");   // OpenAI's face/identity preservation control
+      form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
+      return fetch("https://api.openai.com/v1/images/edits", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${openaiApiKey}` },
+        body: form,
+      });
+    };
 
-    const aiRes = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${openaiApiKey}` },
-      body: form,
-    });
+    let modelUsed = "gpt-image-1.5";
+    let aiRes = await callEdit(modelUsed);
+    if (!aiRes.ok && [400, 403, 404].includes(aiRes.status)) {
+      const firstErr = await aiRes.text().catch(() => "");
+      console.warn(`⚠ gpt-image-1.5 unavailable (${aiRes.status}) — falling back to gpt-image-1:`, firstErr.slice(0, 160));
+      modelUsed = "gpt-image-1";
+      aiRes = await callEdit(modelUsed);
+    }
 
     if (!aiRes.ok) {
       const errText = await aiRes.text().catch(() => "");
-      console.error(`✗ gpt-image-1 ${aiRes.status}:`, errText.slice(0, 400));
+      console.error(`✗ ${modelUsed} ${aiRes.status}:`, errText.slice(0, 400));
       sendJson(res, 502, { error: `OpenAI image ${aiRes.status}`, detail: errText.slice(0, 300) });
       return;
     }
@@ -1721,7 +1752,7 @@ async function handleUpscaleImage(req, res) {
       return;
     }
 
-    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (quality=${quality})`);
+    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${modelUsed}, ${size}, quality=${quality})`);
     sendJson(res, 200, { image: `data:image/png;base64,${b64}`, context: description });
   } catch (err) {
     console.error("✗ upscale-image error:", err);

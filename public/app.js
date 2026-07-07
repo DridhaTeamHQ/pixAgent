@@ -2790,6 +2790,9 @@ if (aiEnhanceBtn) {
         headers: {
           "Content-Type": "image/png",
           "X-Image-Orientation": rawW >= rawH ? "landscape" : "portrait",
+          // The selected poster ratio drives the generated image's shape —
+          // a 9:16 poster gets a portrait render (outpainted if needed).
+          "X-Poster-Ratio": state.aspectRatio || "",
           // Story context helps the vision stage understand what the photo
           // shows, which sharpens the "preserve exactly this" instructions.
           "X-Headline": encodeURIComponent((state.headline || "").slice(0, 200)),
