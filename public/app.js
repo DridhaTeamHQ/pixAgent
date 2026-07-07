@@ -419,8 +419,10 @@ function syncPreviewModeUI() {
 }
 
 function updatePrimaryDownloadButton() {
-  if (!downloadButton) return;
-  downloadButton.textContent = "Download Poster PNG";
+  // Update only the label span — the button also contains an SVG icon that
+  // textContent assignment on the button itself would wipe out.
+  const label = document.getElementById("download-btn-label");
+  if (label) label.textContent = "Download Poster";
 }
 
 updatePrimaryDownloadButton();
