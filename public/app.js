@@ -7,10 +7,22 @@ const canvas = document.getElementById("post-canvas");
 let ctx = canvas.getContext("2d");
 const screenCtx = ctx;   // permanent reference to the on-screen context
 
-// Export supersampling factor. 2× gives 4K-class output for 16:9 (3840×2160)
-// and 4K-tall for 9:16 (1840×3400), at the cost of larger PNG file size
-// (~3× vs design-size). Bumping to 3 quadruples filesize for marginal gain.
-const EXPORT_SCALE = 2;
+// ── Export resolution ──
+// Downloads target a TRUE 4K long edge (3840 px) regardless of ratio:
+//   9:16  920×1700  → ×2.26 → 2078×3840
+//   4:5  1080×1350  → ×2.84 → 3072×3840
+//   1:1  1080×1080  → ×3.56 → 3840×3840
+//   16:9 1920×1080  → ×2.00 → 3840×2160 (4K UHD)
+// Clamped to [2, 4] as a safety band (canvas-area limits on low-end mobile).
+const EXPORT_LONG_EDGE = 3840;
+function getExportScale() {
+  const longEdge = Math.max(canvas.width, canvas.height);
+  return Math.min(4, Math.max(2, EXPORT_LONG_EDGE / longEdge));
+}
+
+// The X export stays at 2× — X rejects PNG uploads over 5 MB, and a full
+// 4K poster PNG regularly crosses that line.
+const X_EXPORT_SCALE = 2;
 const IMAGE_PAN_LIMIT = 900;
 const IMAGE_PAN_HEADROOM = 1.1;
 
@@ -668,10 +680,10 @@ function downloadXPreview({ usePrimaryButton = false } = {}) {
   state.useShortlyLogo = true;
 
   try {
-    const exportCanvas = renderToHighResCanvas(EXPORT_SCALE);
+    const exportCanvas = renderToHighResCanvas(X_EXPORT_SCALE);
     const cropped = exportCanvasCroppedToContent(exportCanvas, {
-      paddingBelow: 36   * EXPORT_SCALE,
-      minHeight:    1100 * EXPORT_SCALE,
+      paddingBelow: 36   * X_EXPORT_SCALE,
+      minHeight:    1100 * X_EXPORT_SCALE,
     });
 
     cropped.toBlob((blob) => {
@@ -724,7 +736,7 @@ function downloadTextPreview() {
   state.previewMode = "text";
 
   try {
-    const exportCanvas = renderToHighResCanvas(EXPORT_SCALE);
+    const exportCanvas = renderToHighResCanvas(getExportScale());
 
     exportCanvas.toBlob((blob) => {
       state.isDownloading = false;
@@ -764,11 +776,11 @@ if (textDownloadButton) textDownloadButton.addEventListener("click", () => {
 
 downloadButton.addEventListener("click", () => {
   // Flag for clean export (no preview overlays). We DO NOT re-render the
-  // screen canvas — the export happens entirely on a 2× offscreen canvas
+  // screen canvas — the export happens entirely on a 4K offscreen canvas
   // via renderToHighResCanvas, then we restore state and re-render screen.
   state.isDownloading = true;
 
-  const exportCanvas = renderToHighResCanvas(EXPORT_SCALE);
+  const exportCanvas = renderToHighResCanvas(getExportScale());
 
   exportCanvas.toBlob((blob) => {
     state.isDownloading = false;
