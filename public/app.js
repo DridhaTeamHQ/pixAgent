@@ -148,6 +148,7 @@ const state = {
   accent: "#7900d9",
   headline: "",
   detailText: "",
+  sourceUrl: "",               // article URL from the last scrape (grounds the AI writer)
   mainImage: null,
   ready: false,
   imageOffset: { x: 0, y: 0 },
@@ -1283,6 +1284,7 @@ async function runScrape() {
     // Update state
     state.headline = payload.title || "";
     state.detailText = limitDetailTextClient(payload.detailText || payload.articleText || payload.title || "");
+    state.sourceUrl = payload.sourceUrl || scrapeUrlInput.value.trim();
     state.ready = true;
 
     // Reset offsets
@@ -1554,6 +1556,12 @@ function renderPoster() {
   if (!state.isDownloading && !isXRenderMode() && getLayout().showPreviewBars) {
     drawEngagementBar();
     drawNavBar();
+  }
+
+  // AI Enhance is only meaningful once a real background image is loaded
+  const enhanceBtn = document.getElementById("ai-enhance-btn");
+  if (enhanceBtn && !enhanceBtn.classList.contains("working")) {
+    enhanceBtn.disabled = !state.mainImage;
   }
 }
 
@@ -2579,4 +2587,215 @@ function setStatus(message, type) {
   scrapeStatus.textContent = message;
   scrapeStatus.className = "status-text";
   if (type) scrapeStatus.classList.add(type);
+}
+
+/* ═══════════════════════ View switcher (Poster | Article) ═══════════════════════ */
+
+const viewTabs = document.getElementById("view-tabs");
+const articleView = document.getElementById("article-view");
+
+function setView(view) {
+  document.body.classList.toggle("view-article", view === "article");
+  if (articleView) articleView.hidden = view !== "article";
+  if (viewTabs) {
+    viewTabs.querySelectorAll(".view-tab").forEach(t => {
+      const active = t.dataset.view === view;
+      t.classList.toggle("active", active);
+      t.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+  // The mobile edit sheet makes no sense on the article view — drop it
+  if (view === "article") setSheetOpen(false);
+}
+
+if (viewTabs) {
+  viewTabs.addEventListener("click", (e) => {
+    const tab = e.target.closest(".view-tab");
+    if (tab) setView(tab.dataset.view);
+  });
+}
+
+/* ═══════════════════════ AI Article Writer ═══════════════════════ */
+
+const articleGenerateBtn = document.getElementById("article-generate-btn");
+const articleStatus      = document.getElementById("article-status");
+const articleResult      = document.getElementById("article-result");
+
+function setArticleStatus(msg, kind) {
+  if (!articleStatus) return;
+  articleStatus.className = "status-text" + (kind ? ` ${kind}` : "");
+  articleStatus.textContent = msg || "";
+}
+
+if (articleGenerateBtn) {
+  articleGenerateBtn.addEventListener("click", async () => {
+    const headline = (state.headline || "").trim();
+    if (!headline) {
+      setArticleStatus("No story yet — build a poster first (Poster tab).", "error");
+      return;
+    }
+
+    articleGenerateBtn.disabled = true;
+    setArticleStatus("Writing headline, bullets and tweet…");
+
+    try {
+      const resp = await fetch("/api/generate-article", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ headline, sourceUrl: state.sourceUrl || "" }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+
+      renderArticle(data);
+      setArticleStatus("✓ Done — review before publishing.", "success");
+    } catch (err) {
+      setArticleStatus(`Generation failed: ${err.message}`, "error");
+    } finally {
+      articleGenerateBtn.disabled = false;
+    }
+  });
+}
+
+function renderArticle({ headline, bullets, tweet, flags }) {
+  const headEl   = document.getElementById("article-headline");
+  const bulletEl = document.getElementById("article-bullets");
+  const tweetEl  = document.getElementById("article-tweet");
+  const flagsBlk = document.getElementById("article-flags-block");
+  const flagsEl  = document.getElementById("article-flags");
+
+  headEl.textContent = headline;
+  const headCount = document.getElementById("article-headline-count");
+  headCount.textContent = `${headline.length} / 60`;
+  headCount.classList.toggle("over", headline.length > 60);
+
+  bulletEl.innerHTML = "";
+  bullets.forEach(b => {
+    const li = document.createElement("li");
+    li.textContent = b;
+    bulletEl.appendChild(li);
+  });
+
+  tweetEl.textContent = tweet;
+  const tweetCount = document.getElementById("article-tweet-count");
+  tweetCount.textContent = `${tweet.length} / 280`;
+  tweetCount.classList.toggle("over", tweet.length > 280);
+
+  if (flags && flags.length) {
+    flagsEl.innerHTML = "";
+    flags.forEach(f => {
+      const li = document.createElement("li");
+      li.textContent = f;
+      flagsEl.appendChild(li);
+    });
+    flagsBlk.hidden = false;
+  } else {
+    flagsBlk.hidden = true;
+  }
+
+  articleResult.hidden = false;
+}
+
+// Copy buttons — per-block and copy-all
+function flashCopied(btn) {
+  const prev = btn.textContent;
+  btn.textContent = "Copied ✓";
+  btn.classList.add("copied");
+  setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied"); }, 1400);
+}
+
+document.querySelectorAll(".copy-btn[data-copy-target]").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const el = document.getElementById(btn.dataset.copyTarget);
+    if (!el) return;
+    const text = el.tagName === "UL"
+      ? [...el.querySelectorAll("li")].map(li => `• ${li.textContent}`).join("\n")
+      : el.textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      flashCopied(btn);
+    } catch { /* clipboard denied */ }
+  });
+});
+
+const copyAllBtn = document.getElementById("article-copy-all");
+if (copyAllBtn) {
+  copyAllBtn.addEventListener("click", async () => {
+    const head    = document.getElementById("article-headline")?.textContent || "";
+    const bullets = [...document.querySelectorAll("#article-bullets li")].map(li => `• ${li.textContent}`).join("\n");
+    const tweet   = document.getElementById("article-tweet")?.textContent || "";
+    const full = `${head}\n\n${bullets}\n\n${tweet}`;
+    try {
+      await navigator.clipboard.writeText(full);
+      const prev = copyAllBtn.textContent;
+      copyAllBtn.textContent = "✓ Copied everything";
+      setTimeout(() => { copyAllBtn.textContent = prev; }, 1400);
+    } catch { /* clipboard denied */ }
+  });
+}
+
+/* ═══════════════════════ AI Enhance (gpt-image-1) ═══════════════════════ */
+
+const aiEnhanceBtn    = document.getElementById("ai-enhance-btn");
+const aiEnhanceStatus = document.getElementById("ai-enhance-status");
+
+function setEnhanceStatus(msg, kind) {
+  if (!aiEnhanceStatus) return;
+  aiEnhanceStatus.className = "status-text" + (kind ? ` ${kind}` : "");
+  aiEnhanceStatus.textContent = msg || "";
+}
+
+if (aiEnhanceBtn) {
+  aiEnhanceBtn.addEventListener("click", async () => {
+    const img = state.mainImage;
+    if (!img) return;
+
+    aiEnhanceBtn.disabled = true;
+    aiEnhanceBtn.classList.add("working");
+    setEnhanceStatus("Enhancing with AI — takes 15–30s…");
+
+    try {
+      // Snapshot the current background to a temp canvas, capped at 1536 on
+      // the long edge (gpt-image-1's max output — no point uploading more).
+      const rawW = img.naturalWidth || img.width;
+      const rawH = img.naturalHeight || img.height;
+      const scale = Math.min(1, 1536 / Math.max(rawW, rawH));
+      const tmp = document.createElement("canvas");
+      tmp.width  = Math.round(rawW * scale);
+      tmp.height = Math.round(rawH * scale);
+      tmp.getContext("2d").drawImage(img, 0, 0, tmp.width, tmp.height);
+
+      const blob = await new Promise(r => tmp.toBlob(r, "image/png"));
+      if (!blob) throw new Error("Couldn't read the current image.");
+
+      const resp = await fetch("/api/upscale-image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "image/png",
+          "X-Image-Orientation": rawW >= rawH ? "landscape" : "portrait",
+        },
+        body: blob,
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      if (!data.image) throw new Error("No image returned.");
+
+      // Swap the background for the enhanced version
+      const enhanced = new Image();
+      await new Promise((resolve, reject) => {
+        enhanced.onload = resolve;
+        enhanced.onerror = () => reject(new Error("Enhanced image failed to load."));
+        enhanced.src = data.image;
+      });
+      await ensureImageFocalPoint(enhanced);
+      state.mainImage = enhanced;
+      renderPoster();
+      setEnhanceStatus("✓ Enhanced! Re-pick a stock image to undo.", "success");
+    } catch (err) {
+      setEnhanceStatus(`Enhance failed: ${err.message}`, "error");
+    } finally {
+      aiEnhanceBtn.classList.remove("working");
+      aiEnhanceBtn.disabled = !state.mainImage;
+    }
+  });
 }

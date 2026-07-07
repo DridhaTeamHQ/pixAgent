@@ -138,6 +138,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && req.url === "/api/generate-article") {
+    await handleGenerateArticle(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/upscale-image") {
+    await handleUpscaleImage(req, res);
+    return;
+  }
+
   // Static file serving — URL-decode so paths with %20 (spaces) etc. resolve.
   let urlPath = req.url === "/" ? "/index.html" : req.url;
   // Drop any query string before disk lookup
@@ -1404,5 +1414,189 @@ async function handleGenerateCaption(req, res) {
     console.error("✗ generate-caption error:", err);
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: err.message || "Caption generation failed." }));
+  }
+}
+
+/* ── OpenAI — full article package (headline + 4 bullets + tweet) ──
+   Local-dev mirror of api/generate-article.js. Editorial rules live in the
+   shared prompt below; keep both copies in sync when editing. */
+const EDITORIAL_SYSTEM_PROMPT = [
+  "You are a news sub-editor at Shortly. Given a source headline (and article text when available), produce a news package in STRICT JSON with this exact shape:",
+  "",
+  '{ "headline": string, "bullets": [string, string, string, string], "tweet": string, "flags": [string] }',
+  "",
+  "FORMAT RULES:",
+  "1. headline: max 60 characters. Newspaper style. Correct sentence capitalisation (capitalise first word and proper nouns only). No repeated phrases from the bullets. No periods in initials (write PM, US, UK — never P.M., U.S.).",
+  "2. bullets: exactly 4 single-line bullet points covering the most important parts of the news. Each one short enough to read in a glance. Do not repeat the headline's phrasing.",
+  "3. tweet: within 280 characters. No dashes of any kind. British English spelling (organise, colour, labour). Facts first — lead with what happened, not opinion. May end with 1-2 relevant hashtags if room allows.",
+  "",
+  "EDITORIAL RULES:",
+  "- Verify claims against the provided source text; if a claim in the headline is not supported by the text, or the story touches something sensitive, add a short note to flags (empty array if none).",
+  "- No em dashes anywhere. Keep the writing flowy and clear.",
+  "- No quotes unless verbatim from the source with the person's name attributed.",
+  "- Simple, conversational but formal language. No jargon.",
+  "- No visual dividers, no markdown, no emojis.",
+  "- Safe-reporting standards for deaths, suicide, and sensitive stories: no method details, no sensationalising, neutral tone.",
+  "- If the story is a tragedy (death, suicide, disaster), the tweet must NOT carry a promotional call-to-action; where appropriate for suicide stories include a helpline line instead (e.g. 'Help is available. Call iCall at 9152987821 (India).').",
+  "- Neutral political framing: attribute claims to both sides, never take a side.",
+  "",
+  "Output ONLY the JSON object. No prose around it.",
+].join("\n");
+
+async function handleGenerateArticle(req, res) {
+  if (!openaiApiKey) {
+    sendJson(res, 503, { error: "OPENAI_API_KEY not set on server." });
+    return;
+  }
+
+  try {
+    const body = await readJson(req);
+    const headline = (body?.headline || "").trim();
+    const sourceUrl = (body?.sourceUrl || "").trim();
+    if (!headline) {
+      sendJson(res, 400, { error: "Missing 'headline' in body." });
+      return;
+    }
+
+    // Ground the model with the actual article text when we have a URL.
+    let articleText = "";
+    if (sourceUrl) {
+      try {
+        const r = await fetch(sourceUrl, { headers: { "user-agent": USER_AGENT } });
+        if (r.ok) {
+          const html = await r.text();
+          const articleMatch = html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i);
+          const scope = articleMatch?.[1] || html;
+          articleText = [...scope.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+            .map((m) => cleanupText(stripTags(m[1] || "")))
+            .filter((t) => t.length >= 50 && t.length <= 500)
+            .filter((t) => !/^(sign up|read more|copyright|follow live|watch:|also read)/i.test(t))
+            .slice(0, 10)
+            .join("\n");
+        }
+      } catch { /* grounding is best-effort */ }
+    }
+
+    const userContent = articleText
+      ? `Source headline:\n${headline}\n\nArticle text:\n${articleText}`
+      : `Source headline:\n${headline}\n\n(No article text available — write from the headline only and flag that facts could not be verified against source text.)`;
+
+    const t0 = Date.now();
+    const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openaiApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: EDITORIAL_SYSTEM_PROMPT },
+          { role: "user", content: userContent },
+        ],
+        temperature: 0.6,
+        max_tokens: 600,
+      }),
+    });
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text().catch(() => "");
+      console.error(`✗ OpenAI ${aiRes.status}:`, errText.slice(0, 300));
+      sendJson(res, 502, { error: `OpenAI ${aiRes.status}`, detail: errText.slice(0, 200) });
+      return;
+    }
+
+    const data = await aiRes.json();
+    let parsed = {};
+    try { parsed = JSON.parse(data?.choices?.[0]?.message?.content || "{}"); } catch { /* handled below */ }
+
+    const out = {
+      headline: (parsed.headline || "").slice(0, 80),
+      bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map(String) : [],
+      tweet: (parsed.tweet || "").slice(0, 280),
+      flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
+    };
+    if (!out.headline || out.bullets.length < 4 || !out.tweet) {
+      sendJson(res, 502, { error: "AI returned an incomplete package.", raw: parsed });
+      return;
+    }
+
+    console.log(`✓ AI article (${Date.now() - t0}ms): "${out.headline}"`);
+    sendJson(res, 200, out);
+  } catch (err) {
+    console.error("✗ generate-article error:", err);
+    sendJson(res, 500, { error: err.message || "Article generation failed." });
+  }
+}
+
+/* ── OpenAI — gpt-image-1 background enhance ──
+   Local-dev mirror of api/upscale-image.js. */
+async function handleUpscaleImage(req, res) {
+  if (!openaiApiKey) {
+    sendJson(res, 503, { error: "OPENAI_API_KEY not set on server." });
+    return;
+  }
+
+  try {
+    // Read raw image body (10 MB cap)
+    const MAX_BYTES = 10 * 1024 * 1024;
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > MAX_BYTES) {
+        sendJson(res, 413, { error: "Image exceeds 10 MB." });
+        return;
+      }
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+    if (buffer.length < 100) {
+      sendJson(res, 400, { error: "Empty or invalid image body." });
+      return;
+    }
+    const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
+
+    const sizeHint = (req.headers["x-image-orientation"] || "").toString();
+    const size =
+      sizeHint === "landscape" ? "1536x1024" :
+      sizeHint === "portrait"  ? "1024x1536" :
+      "auto";
+
+    const form = new FormData();
+    form.append("model", "gpt-image-1");
+    form.append("prompt", "Enhance this news photograph: increase sharpness, detail and clarity, remove compression artifacts and noise, improve lighting and colour balance. Keep the content, composition, faces, text and all elements EXACTLY identical to the original. Do not add, remove or alter anything.");
+    form.append("size", size);
+    form.append("quality", "high");
+    form.append("input_fidelity", "high");
+    form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
+
+    const t0 = Date.now();
+    const aiRes = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${openaiApiKey}` },
+      body: form,
+    });
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text().catch(() => "");
+      console.error(`✗ gpt-image-1 ${aiRes.status}:`, errText.slice(0, 400));
+      sendJson(res, 502, { error: `OpenAI image ${aiRes.status}`, detail: errText.slice(0, 300) });
+      return;
+    }
+
+    const data = await aiRes.json();
+    const b64 = data?.data?.[0]?.b64_json;
+    if (!b64) {
+      sendJson(res, 502, { error: "OpenAI returned no image data." });
+      return;
+    }
+
+    console.log(`✓ AI enhance done in ${Date.now() - t0}ms`);
+    sendJson(res, 200, { image: `data:image/png;base64,${b64}` });
+  } catch (err) {
+    console.error("✗ upscale-image error:", err);
+    sendJson(res, 500, { error: err.message || "Image enhance failed." });
   }
 }

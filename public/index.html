@@ -32,8 +32,14 @@
   <nav class="app-nav">
     <div class="nav-logo">
       <span class="nav-logo-mark">Px</span>
-      Pix Post Builder
+      <span class="nav-logo-text">Pix Post Builder</span>
     </div>
+    <!-- View switcher: Poster canvas vs AI Article writer -->
+    <div class="view-tabs" id="view-tabs" role="tablist" aria-label="View">
+      <button type="button" class="view-tab active" data-view="poster" role="tab" aria-selected="true">🖼️ Poster</button>
+      <button type="button" class="view-tab" data-view="article" role="tab" aria-selected="false">📰 Article</button>
+    </div>
+
     <div class="nav-actions">
       <a class="nav-link" href="https://shortlyagents.vercel.app/">Shortly Agents</a>
       <span class="nav-badge">Beta</span>
@@ -225,6 +231,13 @@
             <span class="upload-text">Drag &amp; drop or click</span>
             <input type="file" id="bg-image-upload" accept="image/*" />
           </label>
+
+          <!-- gpt-image-1 enhance: regenerates the background at higher clarity -->
+          <button type="button" id="ai-enhance-btn" class="btn-ai" disabled>
+            <span class="ai-spark">✨</span> AI Enhance Image
+          </button>
+          <p id="ai-enhance-status" class="status-text" role="status" aria-live="polite"></p>
+
           <div id="stock-images-section" class="acc-subgroup" hidden>
             <h3 class="acc-subtitle">Stock Backgrounds</h3>
             <div id="stock-images-grid" class="stock-grid"></div>
@@ -333,6 +346,58 @@
     </section>
 
   </main>
+
+  <!-- ═══ VIEW 2: AI Article Writer ═══ -->
+  <section class="article-shell" id="article-view" hidden>
+    <div class="glass-panel article-panel">
+
+      <header class="article-intro">
+        <h1>Write the<br>article.</h1>
+        <p class="desc">AI drafts a newspaper-style headline, 4 key bullets and a ready-to-post tweet from your scraped story.</p>
+        <button type="button" id="article-generate-btn" class="btn-primary">✨ Generate Article</button>
+        <p id="article-status" class="status-text" role="status" aria-live="polite">Build a poster first, then generate.</p>
+      </header>
+
+      <div id="article-result" class="article-result" hidden>
+
+        <div class="article-block">
+          <div class="article-block-head">
+            <span class="article-block-label">Headline</span>
+            <span class="char-count" id="article-headline-count">0 / 60</span>
+            <button type="button" class="copy-btn" data-copy-target="article-headline">Copy</button>
+          </div>
+          <p class="article-headline" id="article-headline"></p>
+        </div>
+
+        <div class="article-block">
+          <div class="article-block-head">
+            <span class="article-block-label">Key Points</span>
+            <button type="button" class="copy-btn" data-copy-target="article-bullets">Copy</button>
+          </div>
+          <ul class="article-bullets" id="article-bullets"></ul>
+        </div>
+
+        <div class="article-block">
+          <div class="article-block-head">
+            <span class="article-block-label">Tweet</span>
+            <span class="char-count" id="article-tweet-count">0 / 280</span>
+            <button type="button" class="copy-btn" data-copy-target="article-tweet">Copy</button>
+          </div>
+          <p class="article-tweet" id="article-tweet"></p>
+        </div>
+
+        <div class="article-block article-flags" id="article-flags-block" hidden>
+          <div class="article-block-head">
+            <span class="article-block-label">⚠ Editorial flags</span>
+          </div>
+          <ul class="article-bullets" id="article-flags"></ul>
+        </div>
+
+        <button type="button" id="article-copy-all" class="btn-secondary">📋 Copy Everything</button>
+      </div>
+
+    </div>
+  </section>
 
   <script src="./app.js"></script>
 </body>
