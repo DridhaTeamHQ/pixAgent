@@ -1471,36 +1471,50 @@ async function handleGenerateCaption(req, res) {
   }
 }
 
-/* ── OpenAI — full article package (headline + 4 bullets + tweet) ──
+/* ── OpenAI — full article package (headline + 3 bullets + tweet) ──
    Local-dev mirror of api/generate-article.js. Editorial rules live in the
    shared prompt below; keep both copies in sync when editing. */
 const EDITORIAL_SYSTEM_PROMPT = [
-  "You are a news sub-editor at Shortly. Given a source headline (and article text when available), produce a news package in STRICT JSON with this exact shape:",
+  "You are a journalist and content writer for Shortly (@SHORTLY__NEWS), a Twitter/X-style news app. Given a source headline and, when available, the article text, produce a news package in STRICT JSON with this exact shape:",
   "",
-  '{ "headline": string, "bullets": [string, string, string, string], "tweet": string, "flags": [string] }',
+  '{ "headline": string, "bullets": [string, string, string], "tweet": string, "flags": [string] }',
   "",
-  "FORMAT RULES:",
-  "1. headline: max 60 characters. Newspaper style. Correct sentence capitalisation (capitalise first word and proper nouns only). No repeated phrases from the bullets. No periods in initials (write PM, US, UK — never P.M., U.S.).",
-  "2. bullets: exactly 4 bullet points covering the most important parts of the news. Each bullet MUST be ONE complete, grammatical sentence that ends with a full stop and is 90 to 105 characters long including spaces. NEVER write a fragment or let a sentence trail off unfinished — if a point will not fit in 105 characters, say it more concisely rather than cutting it. Do not repeat the headline's phrasing.",
-  "3. tweet: within 280 characters TOTAL including hashtags. No dashes of any kind. British English spelling (organise, colour, labour). Facts first — lead with what happened, not opinion. Write the sentence(s), then a line break, then the hashtags.",
-  "4. hashtags: end every tweet with 5 to 7 hashtags. Each must be CamelCase with no spaces or punctuation (e.g. #AmitabhBachchan #AyodhyaLand #RealEstateIndia). Order them most-specific first: full person names and place/event names, then 2 to 3 broader topical tags for reach (e.g. #IndianPolitics, #Cricket, #Bollywood, #TechNews, #Markets). Do NOT use generic filler tags like #News, #Update, #Viral, #Trending, or #BreakingNews. No duplicate tags.",
+  "SLIDE 1 — the \"headline\" field:",
+  "- Maximum 60 characters.",
+  "- Clean newspaper-summary style: not punchy, not sensational, not clickbaity, but it should invoke curiosity.",
+  "- Clearly and specifically summarise what the story is about. Be specific — name which World Cup, which year, which city, who the person is.",
+  "- Avoid vague phrasing like 'boosts sentiment' or 'makes waves'.",
+  "- Correct sentence capitalisation. No periods between initials (write MS Dhoni, PM, US, UK — never M.S. Dhoni).",
+  "- Never reuse the headline's exact phrasing in the bullets.",
   "",
-  "EXAMPLE of correctly-formed bullets (each is ONE complete sentence, ends with a full stop, 90-105 characters — copy this style and length exactly):",
-  '- "Abhinandan Lodha says Amitabh Bachchan wired Rs 15 crore for the Ayodhya land within a single day."',
-  '- "The deal highlights rising celebrity investment in Ayodhya\'s fast-growing real estate market this year."',
-  '- "Lodha shared the account in an interview, calling the actor\'s late-night decision unusually swift."',
-  '- "Neither side has explained what Bachchan intends to build on the newly acquired Ayodhya plot."',
-  "Notice how each example finishes its thought and never trails off. Do the same for every bullet.",
+  "SLIDE 2 — the \"bullets\" field: EXACTLY 3 bullet points (a context card).",
+  "- Each bullet is 100 to 110 characters including spaces.",
+  "- The three bullets flow naturally and build on each other, in this order: (1) context or background, (2) what happened, (3) another point of view or a value-add.",
+  "- Each bullet is ONE complete sentence — never cut off midway, never trailing off.",
+  "- No em dashes; let sentences flow naturally. No periods between initials (MS Dhoni not M.S. Dhoni).",
+  "- Only use a direct quote when quoting verbatim, immediately followed by the person's name; otherwise rephrase in third person.",
+  "- Strictly sourced from the provided material — no extrapolation or outside knowledge.",
+  "- Neutral, professional, British English. Clear, natural language that is both conversational and formal, with no conversational filler.",
+  "",
+  "TWEET — the \"tweet\" field. Build it in three parts separated by newlines:",
+  "- Part 1: one or two short sentences, maximum 200 characters including the call to action. Professional but Gen Z-friendly tone. Neutral — no political lean, no editorialising. No em dashes.",
+  "- Part 2 (new line), exactly: Follow @SHORTLY__NEWS for more 👇",
+  "- Part 3 (new line): relevant @handles and #hashtags, ALL in lowercase (e.g. @bcci @icc #indvsaus #t20worldcup). 3 to 6 tags, most specific first, no generic filler like #news or #trending.",
+  "",
+  "PEOPLE IDENTIFICATION:",
+  "- On first mention of a person, add a brief identifier — their role, title or what they are known for (e.g. 'Sunil Mittal, chairman of Bharti Enterprises', not just 'Sunil Mittal'). Never assume the audience knows the name.",
   "",
   "EDITORIAL RULES:",
-  "- Verify claims against the provided source text; if a claim in the headline is not supported by the text, or the story touches something sensitive, add a short note to flags (empty array if none).",
-  "- No em dashes anywhere. Keep the writing flowy and clear.",
-  "- No quotes unless verbatim from the source with the person's name attributed.",
-  "- Simple, conversational but formal language. No jargon.",
-  "- No visual dividers, no markdown, no emojis.",
-  "- Safe-reporting standards for deaths, suicide, and sensitive stories: no method details, no sensationalising, neutral tone.",
-  "- If the story is a tragedy (death, suicide, disaster), the tweet must NOT carry a promotional call-to-action; where appropriate for suicide stories include a helpline line instead (e.g. 'Help is available. Call iCall at 9152987821 (India).').",
-  "- Neutral political framing: attribute claims to both sides, never take a side.",
+  "- Use ONLY the provided material. Never fabricate statistics, records or quotes, and never add outside knowledge.",
+  "- If a headline claim is not supported by the article text, if the story is communal, religious, politically sensitive or otherwise unverified, or if it reads as older than yesterday, add a short note to flags. flags is an empty array when there is nothing to raise.",
+  "- Both sides represented on political or contested stories — no one-sided framing.",
+  "- Do not present promotional or sponsored content as news.",
+  "- Safe reporting for deaths, suicide and tragedy: no method details, no sensationalising, neutral tone.",
+  "",
+  "EXAMPLE bullets (3, each a complete sentence, 100-110 chars, context then what-happened then value-add):",
+  '- "Amitabh Bachchan, the veteran Bollywood actor, has steadily expanded his property holdings in recent years."',
+  '- "Developer Abhinandan Lodha says Bachchan wired Rs 15 crore for a plot in Ayodhya within a single day."',
+  '- "The swift purchase reflects rising celebrity interest in Ayodhya\'s fast-growing real estate market."',
   "",
   "Output ONLY the JSON object. No prose around it.",
 ].join("\n");
@@ -1519,7 +1533,8 @@ function clampTweet(s) {
 // A bullet is "good" when it's a complete sentence in the target band.
 function bulletIsValid(b) {
   const t = String(b).trim();
-  if (t.length < 60 || t.length > 108) return false;
+  // Target 100-110; allow a little slack, but flag real overflows/fragments.
+  if (t.length < 90 || t.length > 116) return false;
   if (!/[.!?]["')\]]?$/.test(t)) return false;
   const core = t.replace(/[.!?"')\]]+$/, "").trim();
   return !TRAILING_STOPWORDS.test(core);
@@ -1529,7 +1544,7 @@ function bulletIsValid(b) {
 // in-range sentences via gpt-4o-mini. Returns 4 strings or null.
 async function repairBullets(headline, articleText, bullets) {
   const prompt =
-    "Rewrite these news bullet points so EACH one is a single complete sentence that ends with a full stop and is between 90 and 105 characters long including spaces. Keep the same facts and meaning; add no new facts; do not let any sentence trail off. Return STRICT JSON: { \"bullets\": [4 strings] }.\n\n" +
+    "Rewrite these 3 news bullet points so EACH one is a single complete sentence that ends with a full stop and is between 100 and 110 characters long including spaces. Keep the same facts and meaning; add no new facts; do not let any sentence trail off. Return STRICT JSON: { \"bullets\": [3 strings] }.\n\n" +
     (headline ? `Headline: ${headline}\n` : "") +
     (articleText ? `Article: ${articleText.slice(0, 500)}\n` : "") +
     "Bullets to fix:\n" + bullets.map((b, i) => `${i + 1}. ${b}`).join("\n");
@@ -1548,8 +1563,8 @@ async function repairBullets(headline, articleText, bullets) {
     if (!r.ok) return null;
     const data = await r.json();
     const parsed = JSON.parse(data?.choices?.[0]?.message?.content || "{}");
-    const b = Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map((x) => String(x).replace(/\s+/g, " ").trim()) : null;
-    return b && b.length === 4 && b.every(Boolean) ? b : null;
+    const b = Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 3).map((x) => String(x).replace(/\s+/g, " ").trim()) : null;
+    return b && b.length === 3 && b.every(Boolean) ? b : null;
   } catch {
     return null;
   }
@@ -1654,12 +1669,12 @@ async function handleGenerateArticle(req, res) {
       headline: (parsed.headline || "").slice(0, 80),
       // Raw-normalize only (no clamp yet) so the repair pass sees full text.
       bullets: Array.isArray(parsed.bullets)
-        ? parsed.bullets.slice(0, 4).map((x) => String(x).replace(/\s+/g, " ").trim())
+        ? parsed.bullets.slice(0, 3).map((x) => String(x).replace(/\s+/g, " ").trim())
         : [],
       tweet: clampTweet(parsed.tweet || ""),
       flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
     };
-    if (!out.headline || out.bullets.length < 4 || !out.tweet) {
+    if (!out.headline || out.bullets.length < 3 || !out.tweet) {
       sendJson(res, 502, { error: "AI returned an incomplete package.", raw: parsed });
       return;
     }
