@@ -1481,7 +1481,7 @@ const EDITORIAL_SYSTEM_PROMPT = [
   "",
   "FORMAT RULES:",
   "1. headline: max 60 characters. Newspaper style. Correct sentence capitalisation (capitalise first word and proper nouns only). No repeated phrases from the bullets. No periods in initials (write PM, US, UK — never P.M., U.S.).",
-  "2. bullets: exactly 4 bullet points covering the most important parts of the news. Each bullet MUST be between 100 and 105 characters long including spaces — a full, self-contained point: what happened plus who/where/the key figure or consequence. Never go below 100 or above 105 characters. Do not repeat the headline's phrasing.",
+  "2. bullets: exactly 4 bullet points covering the most important parts of the news. Each bullet MUST be ONE complete, grammatical sentence that ends with a full stop and is 90 to 105 characters long including spaces. NEVER write a fragment or let a sentence trail off unfinished — if a point will not fit in 105 characters, say it more concisely rather than cutting it. Do not repeat the headline's phrasing.",
   "3. tweet: within 280 characters TOTAL including hashtags. No dashes of any kind. British English spelling (organise, colour, labour). Facts first — lead with what happened, not opinion. Write the sentence(s), then a line break, then the hashtags.",
   "4. hashtags: end every tweet with 5 to 7 hashtags. Each must be CamelCase with no spaces or punctuation (e.g. #AmitabhBachchan #AyodhyaLand #RealEstateIndia). Order them most-specific first: full person names and place/event names, then 2 to 3 broader topical tags for reach (e.g. #IndianPolitics, #Cricket, #Bollywood, #TechNews, #Markets). Do NOT use generic filler tags like #News, #Update, #Viral, #Trending, or #BreakingNews. No duplicate tags.",
   "",
@@ -1509,14 +1509,27 @@ function clampTweet(s) {
   return cut.trim();
 }
 
-// Hard-cap a bullet at 105 chars, trimming at a word boundary (no ellipsis).
+// Keep a bullet ≤105 chars WITHOUT ever cutting mid-sentence or mid-word.
+// Tiny headroom (110) leaves near-target complete sentences intact; beyond
+// that, prefer the longest run of whole sentences that fits, else trim at a
+// word boundary and close with a full stop so it never looks chopped.
 function clampBullet(s) {
   s = String(s).replace(/\s+/g, " ").trim();
-  if (s.length <= 105) return s;
-  let cut = s.slice(0, 105);
+  if (s.length <= 110) return s;
+
+  const sentences = s.match(/[^.!?]+[.!?]+/g) || [];
+  let acc = "";
+  for (const sen of sentences) {
+    if ((acc + sen).trim().length <= 108) acc += sen; else break;
+  }
+  acc = acc.trim();
+  if (acc.length >= 40) return acc;
+
+  let cut = s.slice(0, 104);
   const sp = cut.lastIndexOf(" ");
-  if (sp > 80) cut = cut.slice(0, sp);
-  return cut.replace(/[\s,;:.\-–—]+$/, "").trim();
+  if (sp > 60) cut = cut.slice(0, sp);
+  cut = cut.replace(/[\s,;:.\-–—]+$/, "").trim();
+  return cut + ".";
 }
 
 async function handleGenerateArticle(req, res) {
