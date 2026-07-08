@@ -59,6 +59,14 @@ async function renderExportBlob(cropOpts = null) {
 // The X export stays at 2× — X rejects PNG uploads over 5 MB, and a full
 // 4K/8K poster PNG blows well past that.
 const X_EXPORT_SCALE = 2;
+
+// Text-preview paragraph font (the bullet copy drawn on the canvas in "Text"
+// mode). Poppins reads heavier + more characterful than Inter; 600 weight
+// fixes the "too thin" look. Measure + draw passes share these so wrapping
+// stays consistent.
+const PREVIEW_TEXT_WEIGHT = 600;
+const PREVIEW_TEXT_FONT = "'Poppins', 'Segoe UI', Arial, sans-serif";
+
 const IMAGE_PAN_LIMIT = 900;
 const IMAGE_PAN_HEADROOM = 1.1;
 
@@ -1769,7 +1777,7 @@ function drawWrappedPreviewText(text, x, minY, maxWidth, maxY, fontSize, lineHei
     visibleLines[ellipsisIndex] = `${visibleLines[ellipsisIndex]}...`;
   }
 
-  ctx.font = `400 ${Math.round(fit.fontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
+  ctx.font = `${PREVIEW_TEXT_WEIGHT} ${Math.round(fit.fontSize)}px ${PREVIEW_TEXT_FONT}`;
   const visibleHeight = visibleLines.reduce((sum, line) => sum + getPreviewTextStep(line, fit.lineHeight), 0);
   const startY = Math.max(minY, maxY - Math.max(0, visibleHeight - fit.lineHeight));
   let cy = startY;
@@ -1794,7 +1802,7 @@ function fitPreviewTextLines(text, maxWidth, minY, maxY, fontSize, lineHeight, o
   for (const scale of scales) {
     const nextFontSize = Math.max(fontSize * scale, fontSize * 0.62);
     const nextLineHeight = Math.max(nextFontSize * 1.34, lineHeight * scale);
-    ctx.font = `400 ${Math.round(nextFontSize)}px 'Inter', 'Segoe UI', Arial, sans-serif`;
+    ctx.font = `${PREVIEW_TEXT_WEIGHT} ${Math.round(nextFontSize)}px ${PREVIEW_TEXT_FONT}`;
     const lines = buildPreviewTextLines(text, maxWidth, options);
     const maxBlockHeight = Math.max(nextLineHeight, maxY - minY + nextLineHeight);
     const visibleLines = getVisiblePreviewLines(lines, nextLineHeight, maxBlockHeight);
