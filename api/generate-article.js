@@ -29,6 +29,17 @@ export const EDITORIAL_SYSTEM_PROMPT = [
   "Output ONLY the JSON object. No prose around it.",
 ].join("\n");
 
+// Hard-cap a bullet at 105 chars, trimming at a word boundary (no ellipsis)
+// so the "≤105 characters" rule holds even when the model overshoots.
+function clampBullet(s) {
+  s = String(s).replace(/\s+/g, " ").trim();
+  if (s.length <= 105) return s;
+  let cut = s.slice(0, 105);
+  const sp = cut.lastIndexOf(" ");
+  if (sp > 80) cut = cut.slice(0, sp);
+  return cut.replace(/[\s,;:.\-–—]+$/, "").trim();
+}
+
 // Pull readable paragraphs out of an article page for grounding.
 function extractArticleText(html) {
   const articleMatch = html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i);
@@ -109,7 +120,7 @@ export default async function handler(req, res) {
 
     const out = {
       headline: (parsed.headline || "").slice(0, 80),
-      bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map(String) : [],
+      bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map(clampBullet) : [],
       tweet: (parsed.tweet || "").slice(0, 280),
       flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
     };

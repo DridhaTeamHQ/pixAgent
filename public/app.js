@@ -717,11 +717,23 @@ function downloadXPreview({ usePrimaryButton = false } = {}) {
   if (targetButton) targetButton.disabled = true;
   setPostStatus("Preparing X download...");
 
-  // Flag for clean export with the Shortly logo. Screen canvas is left
-  // alone - the export happens on a 2x offscreen canvas via
-  // renderToHighResCanvas, then we restore state and re-render screen.
+  // Explicitly own the render mode so a stale "text" preview / forceTextExport
+  // can never leak the text image into the X export. Restore the user's
+  // on-screen preview mode afterwards.
+  const prevMode = state.previewMode;
   state.isDownloading = true;
   state.useShortlyLogo = true;
+  state.forceTextExport = false;
+  state.previewMode = "x";
+
+  const restore = () => {
+    state.isDownloading = false;
+    state.useShortlyLogo = false;
+    state.forceTextExport = false;
+    state.previewMode = prevMode;
+    renderPoster();
+    if (targetButton) targetButton.disabled = false;
+  };
 
   try {
     const exportCanvas = renderToHighResCanvas(X_EXPORT_SCALE);
@@ -731,30 +743,21 @@ function downloadXPreview({ usePrimaryButton = false } = {}) {
     });
 
     cropped.toBlob((blob) => {
-      state.isDownloading = false;
-      state.useShortlyLogo = false;
-      renderPoster();
-
+      restore();
       if (!blob) {
-        if (targetButton) targetButton.disabled = false;
         setPostStatus("Couldn't render image.", "error");
         return;
       }
-
       const blobUrl = URL.createObjectURL(blob);
       const dl = document.createElement("a");
       dl.href = blobUrl;
       dl.download = `${slugify(headline || "pix-post")}-x.png`;
       dl.click();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      if (targetButton) targetButton.disabled = false;
       setPostStatus("X-ready PNG downloaded.", "success");
     }, "image/png");
   } catch (error) {
-    state.isDownloading = false;
-    state.useShortlyLogo = false;
-    renderPoster();
-    if (targetButton) targetButton.disabled = false;
+    restore();
     setPostStatus("Couldn't render X download.", "error");
     console.error("X download failed:", error);
   }
@@ -815,7 +818,14 @@ downloadButton.addEventListener("click", async () => {
   // on-screen preview never changes; we restore state + re-render after.
   downloadButton.disabled = true;
   setStatus("Rendering high-resolution poster…");
+
+  // Explicitly own the render mode → always the Pix poster, never text/X,
+  // regardless of the current preview toggle or leftover flags.
+  const prevMode = state.previewMode;
   state.isDownloading = true;
+  state.forceTextExport = false;
+  state.useShortlyLogo = false;
+  state.previewMode = "pix";
 
   let result = null;
   try {
@@ -824,6 +834,7 @@ downloadButton.addEventListener("click", async () => {
     console.error("Download failed:", err);
   } finally {
     state.isDownloading = false;
+    state.previewMode = prevMode;
     renderPoster();  // Restore preview
     downloadButton.disabled = false;
   }

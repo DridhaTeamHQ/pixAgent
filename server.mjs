@@ -1497,6 +1497,16 @@ const EDITORIAL_SYSTEM_PROMPT = [
   "Output ONLY the JSON object. No prose around it.",
 ].join("\n");
 
+// Hard-cap a bullet at 105 chars, trimming at a word boundary (no ellipsis).
+function clampBullet(s) {
+  s = String(s).replace(/\s+/g, " ").trim();
+  if (s.length <= 105) return s;
+  let cut = s.slice(0, 105);
+  const sp = cut.lastIndexOf(" ");
+  if (sp > 80) cut = cut.slice(0, sp);
+  return cut.replace(/[\s,;:.\-–—]+$/, "").trim();
+}
+
 async function handleGenerateArticle(req, res) {
   if (!openaiApiKey) {
     sendJson(res, 503, { error: "OPENAI_API_KEY not set on server." });
@@ -1567,7 +1577,7 @@ async function handleGenerateArticle(req, res) {
 
     const out = {
       headline: (parsed.headline || "").slice(0, 80),
-      bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map(String) : [],
+      bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map(clampBullet) : [],
       tweet: (parsed.tweet || "").slice(0, 280),
       flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
     };
