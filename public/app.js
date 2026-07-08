@@ -8,20 +8,56 @@ let ctx = canvas.getContext("2d");
 const screenCtx = ctx;   // permanent reference to the on-screen context
 
 // ── Export resolution ──
-// Downloads target a TRUE 4K long edge (3840 px) regardless of ratio:
-//   9:16  920×1700  → ×2.26 → 2078×3840
-//   4:5  1080×1350  → ×2.84 → 3072×3840
-//   1:1  1080×1080  → ×3.56 → 3840×3840
-//   16:9 1920×1080  → ×2.00 → 3840×2160 (4K UHD)
-// Clamped to [2, 4] as a safety band (canvas-area limits on low-end mobile).
-const EXPORT_LONG_EDGE = 3840;
-function getExportScale() {
+// Downloads aim as high as the browser can actually encode: 8K long edge
+// first, stepping down to 6K then 4K. Oversized canvases silently fail on
+// iOS/low-end GPUs (toBlob returns null or a blank) — the fallback chain in
+// renderExportBlob() keeps trying smaller until one really encodes.
+//   8K target (7680 long edge):
+//     9:16  920×1700  → ×4.52 → 4159×7680
+//     4:5  1080×1350  → ×5.69 → 6144×7680
+//     1:1  1080×1080  → ×7.11 → 7680×7680
+//     16:9 1920×1080  → ×4.00 → 7680×4320 (8K UHD)
+const EXPORT_LONG_EDGES = [7680, 6144, 3840];   // 8K → 6K → 4K
+function scaleForLongEdge(target) {
   const longEdge = Math.max(canvas.width, canvas.height);
-  return Math.min(4, Math.max(2, EXPORT_LONG_EDGE / longEdge));
+  return Math.max(2, target / longEdge);   // never below 2× (retina floor)
+}
+
+/**
+ * Render + PNG-encode the poster at the highest resolution the browser can
+ * handle, stepping down through EXPORT_LONG_EDGES on failure.
+ * `cropOpts` (optional): { paddingBelow, minHeight } in DESIGN pixels —
+ * multiplied by the chosen scale before cropping the trailing black gap.
+ * Returns { blob, width, height } or null if every tier failed.
+ */
+async function renderExportBlob(cropOpts = null) {
+  for (const target of EXPORT_LONG_EDGES) {
+    const scale = scaleForLongEdge(target);
+    let out;
+    try {
+      out = renderToHighResCanvas(scale);
+      if (cropOpts) {
+        out = exportCanvasCroppedToContent(out, {
+          paddingBelow: cropOpts.paddingBelow * scale,
+          minHeight:    cropOpts.minHeight * scale,
+        });
+      }
+    } catch {
+      continue;   // allocation failed at this size — try smaller
+    }
+    // toBlob returns null (or throws) when the canvas is too large to encode.
+    const blob = await new Promise((resolve) => {
+      try { out.toBlob(resolve, "image/png"); } catch { resolve(null); }
+    });
+    if (blob && blob.size > 2000) {
+      return { blob, width: out.width, height: out.height };
+    }
+  }
+  return null;
 }
 
 // The X export stays at 2× — X rejects PNG uploads over 5 MB, and a full
-// 4K poster PNG regularly crosses that line.
+// 4K/8K poster PNG blows well past that.
 const X_EXPORT_SCALE = 2;
 const IMAGE_PAN_LIMIT = 900;
 const IMAGE_PAN_HEADROOM = 1.1;
@@ -720,7 +756,7 @@ if (xDownloadBtn) xDownloadBtn.addEventListener("click", () => {
   downloadXPreview();
 });
 
-function downloadTextPreview() {
+async function downloadTextPreview() {
   const headline = (state.headline || "").trim();
   if (!headline && !getDetailTextForPreview().trim()) {
     setPostStatus("Build a poster first.", "error");
@@ -728,75 +764,73 @@ function downloadTextPreview() {
   }
 
   if (textDownloadButton) textDownloadButton.disabled = true;
-  setPostStatus("Preparing Text download...");
+  setPostStatus("Rendering high-resolution text image…");
 
   const previousMode = state.previewMode;
   state.isDownloading = true;
   state.forceTextExport = true;
   state.previewMode = "text";
 
+  let result = null;
   try {
-    const exportCanvas = renderToHighResCanvas(getExportScale());
-
-    exportCanvas.toBlob((blob) => {
-      state.isDownloading = false;
-      state.forceTextExport = false;
-      state.previewMode = previousMode;
-      renderPoster();
-
-      if (!blob) {
-        if (textDownloadButton) textDownloadButton.disabled = false;
-        setPostStatus("Couldn't render text image.", "error");
-        return;
-      }
-
-      const blobUrl = URL.createObjectURL(blob);
-      const dl = document.createElement("a");
-      dl.href = blobUrl;
-      dl.download = `${slugify(headline || "pix-post")}-text.png`;
-      dl.click();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      if (textDownloadButton) textDownloadButton.disabled = false;
-      setPostStatus("Text PNG downloaded.", "success");
-    }, "image/png");
+    result = await renderExportBlob();
   } catch (error) {
+    console.error("Text download failed:", error);
+  } finally {
     state.isDownloading = false;
     state.forceTextExport = false;
     state.previewMode = previousMode;
     renderPoster();
     if (textDownloadButton) textDownloadButton.disabled = false;
-    setPostStatus("Couldn't render text download.", "error");
-    console.error("Text download failed:", error);
   }
+
+  if (!result) {
+    setPostStatus("Couldn't render text image.", "error");
+    return;
+  }
+  const blobUrl = URL.createObjectURL(result.blob);
+  const dl = document.createElement("a");
+  dl.href = blobUrl;
+  dl.download = `${slugify(headline || "pix-post")}-text.png`;
+  dl.click();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  setPostStatus(`Text PNG downloaded (${result.width}×${result.height}).`, "success");
 }
 
 if (textDownloadButton) textDownloadButton.addEventListener("click", () => {
   downloadTextPreview();
 });
 
-downloadButton.addEventListener("click", () => {
-  // Flag for clean export (no preview overlays). We DO NOT re-render the
-  // screen canvas — the export happens entirely on a 4K offscreen canvas
-  // via renderToHighResCanvas, then we restore state and re-render screen.
+downloadButton.addEventListener("click", async () => {
+  // Clean export (no preview overlays). The export happens entirely on an
+  // offscreen canvas via renderExportBlob (8K→6K→4K fallback), so the
+  // on-screen preview never changes; we restore state + re-render after.
+  downloadButton.disabled = true;
+  setStatus("Rendering high-resolution poster…");
   state.isDownloading = true;
 
-  const exportCanvas = renderToHighResCanvas(getExportScale());
-
-  exportCanvas.toBlob((blob) => {
+  let result = null;
+  try {
+    result = await renderExportBlob();
+  } catch (err) {
+    console.error("Download failed:", err);
+  } finally {
     state.isDownloading = false;
     renderPoster();  // Restore preview
+    downloadButton.disabled = false;
+  }
 
-    if (!blob) {
-      setStatus("Failed to generate high-quality export.", "error");
-      return;
-    }
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${slugify(state.headline || "pix-post")}.png`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 100);
-  }, "image/png");
+  if (!result) {
+    setStatus("Failed to generate high-resolution export.", "error");
+    return;
+  }
+  const url = URL.createObjectURL(result.blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${slugify(state.headline || "pix-post")}.png`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setStatus(`Poster downloaded (${result.width}×${result.height}).`, "success");
 });
 
 // Headline live edit
