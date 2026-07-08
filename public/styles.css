@@ -1282,6 +1282,26 @@ body.view-article .edit-sheet { display: none !important; }
 .article-flags .article-bullets li::before { background: var(--red); }
 .article-flags .article-bullets li { color: var(--text-secondary); font-size: 0.85rem; }
 
+/* ── Article (Text) page typography ──────────────────────────────
+   The editorial copy uses Poppins at a heavier weight than the tool's
+   Inter UI — a distinct, sturdier voice for the written article.
+   Scoped to #article-view so the Poster page is untouched. */
+#article-view { font-family: var(--font-display); }
+#article-view .article-intro .desc { font-weight: 500; }
+#article-view .article-headline {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.28;
+}
+#article-view .article-bullets li {
+  font-weight: 500;
+  line-height: 1.55;
+}
+#article-view .article-tweet { font-weight: 500; }
+#article-view .article-block-label { font-weight: 700; }
+#article-view .copy-btn,
+#article-view .btn-secondary { font-weight: 600; }
+
 /* ─── AI Enhance button (gpt-image-1) ─────────────────────── */
 .btn-ai {
   display: inline-flex;

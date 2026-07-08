@@ -1,6 +1,6 @@
 // AI article writer — gpt-4o-mini, JSON mode.
 // Takes { headline, sourceUrl? } and returns:
-//   { headline, bullets: [3 strings], tweet, flags: [notes] }
+//   { headline, bullets: [4 strings], tweet, flags: [notes] }
 // following the Shortly editorial format & safety rules.
 
 import { USER_AGENT, setCors, handlePreflight } from "../lib/http.js";
@@ -9,11 +9,11 @@ import { stripTags, cleanupText } from "../lib/scrape.js";
 export const EDITORIAL_SYSTEM_PROMPT = [
   "You are a news sub-editor at Shortly. Given a source headline (and article text when available), produce a news package in STRICT JSON with this exact shape:",
   "",
-  '{ "headline": string, "bullets": [string, string, string], "tweet": string, "flags": [string] }',
+  '{ "headline": string, "bullets": [string, string, string, string], "tweet": string, "flags": [string] }',
   "",
   "FORMAT RULES:",
   "1. headline: max 60 characters. Newspaper style. Correct sentence capitalisation (capitalise first word and proper nouns only). No repeated phrases from the bullets. No periods in initials (write PM, US, UK — never P.M., U.S.).",
-  "2. bullets: exactly 3 bullet points covering the most important parts of the news. Each bullet should be about TWO lines of text — 20 to 32 words with real substance: what happened plus who/where/the key figure or consequence. Not a one-line fragment, not a paragraph. Do not repeat the headline's phrasing.",
+  "2. bullets: exactly 4 bullet points covering the most important parts of the news. Each bullet MUST be between 100 and 105 characters long including spaces — a full, self-contained point: what happened plus who/where/the key figure or consequence. Never go below 100 or above 105 characters. Do not repeat the headline's phrasing.",
   "3. tweet: within 280 characters. No dashes of any kind. British English spelling (organise, colour, labour). Facts first — lead with what happened, not opinion. May end with 1-2 relevant hashtags if room allows.",
   "",
   "EDITORIAL RULES:",
@@ -109,11 +109,11 @@ export default async function handler(req, res) {
 
     const out = {
       headline: (parsed.headline || "").slice(0, 80),
-      bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 3).map(String) : [],
+      bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map(String) : [],
       tweet: (parsed.tweet || "").slice(0, 280),
       flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
     };
-    if (!out.headline || out.bullets.length < 3 || !out.tweet) {
+    if (!out.headline || out.bullets.length < 4 || !out.tweet) {
       res.status(502).json({ error: "AI returned an incomplete package.", raw: parsed });
       return;
     }
