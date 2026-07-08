@@ -1485,6 +1485,13 @@ const EDITORIAL_SYSTEM_PROMPT = [
   "3. tweet: within 280 characters TOTAL including hashtags. No dashes of any kind. British English spelling (organise, colour, labour). Facts first — lead with what happened, not opinion. Write the sentence(s), then a line break, then the hashtags.",
   "4. hashtags: end every tweet with 5 to 7 hashtags. Each must be CamelCase with no spaces or punctuation (e.g. #AmitabhBachchan #AyodhyaLand #RealEstateIndia). Order them most-specific first: full person names and place/event names, then 2 to 3 broader topical tags for reach (e.g. #IndianPolitics, #Cricket, #Bollywood, #TechNews, #Markets). Do NOT use generic filler tags like #News, #Update, #Viral, #Trending, or #BreakingNews. No duplicate tags.",
   "",
+  "EXAMPLE of correctly-formed bullets (each is ONE complete sentence, ends with a full stop, 90-105 characters — copy this style and length exactly):",
+  '- "Abhinandan Lodha says Amitabh Bachchan wired Rs 15 crore for the Ayodhya land within a single day."',
+  '- "The deal highlights rising celebrity investment in Ayodhya\'s fast-growing real estate market this year."',
+  '- "Lodha shared the account in an interview, calling the actor\'s late-night decision unusually swift."',
+  '- "Neither side has explained what Bachchan intends to build on the newly acquired Ayodhya plot."',
+  "Notice how each example finishes its thought and never trails off. Do the same for every bullet.",
+  "",
   "EDITORIAL RULES:",
   "- Verify claims against the provided source text; if a claim in the headline is not supported by the text, or the story touches something sensitive, add a short note to flags (empty array if none).",
   "- No em dashes anywhere. Keep the writing flowy and clear.",
@@ -1509,27 +1516,70 @@ function clampTweet(s) {
   return cut.trim();
 }
 
+// A bullet is "good" when it's a complete sentence in the target band.
+function bulletIsValid(b) {
+  const t = String(b).trim();
+  if (t.length < 60 || t.length > 108) return false;
+  if (!/[.!?]["')\]]?$/.test(t)) return false;
+  const core = t.replace(/[.!?"')\]]+$/, "").trim();
+  return !TRAILING_STOPWORDS.test(core);
+}
+
+// Self-repair pass: rewrite overflowing/fragment bullets into complete
+// in-range sentences via gpt-4o-mini. Returns 4 strings or null.
+async function repairBullets(headline, articleText, bullets) {
+  const prompt =
+    "Rewrite these news bullet points so EACH one is a single complete sentence that ends with a full stop and is between 90 and 105 characters long including spaces. Keep the same facts and meaning; add no new facts; do not let any sentence trail off. Return STRICT JSON: { \"bullets\": [4 strings] }.\n\n" +
+    (headline ? `Headline: ${headline}\n` : "") +
+    (articleText ? `Article: ${articleText.slice(0, 500)}\n` : "") +
+    "Bullets to fix:\n" + bullets.map((b, i) => `${i + 1}. ${b}`).join("\n");
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${openaiApiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.3,
+        max_tokens: 400,
+      }),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const parsed = JSON.parse(data?.choices?.[0]?.message?.content || "{}");
+    const b = Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map((x) => String(x).replace(/\s+/g, " ").trim()) : null;
+    return b && b.length === 4 && b.every(Boolean) ? b : null;
+  } catch {
+    return null;
+  }
+}
+
 // Keep a bullet ≤105 chars WITHOUT ever cutting mid-sentence or mid-word.
 // Tiny headroom (110) leaves near-target complete sentences intact; beyond
 // that, prefer the longest run of whole sentences that fits, else trim at a
 // word boundary and close with a full stop so it never looks chopped.
+const TRAILING_STOPWORDS = /\s+(and|or|but|to|of|in|on|at|for|with|the|a|an|its|his|her|their|our|your|this|that|these|those|as|by|from|into|onto|over|under|about|after|before|while|amid|is|are|was|were|has|have|had|will|would|which|who|when|where)$/i;
+
 function clampBullet(s) {
   s = String(s).replace(/\s+/g, " ").trim();
-  if (s.length <= 110) return s;
+  if (s.length <= 118) return s;
 
   const sentences = s.match(/[^.!?]+[.!?]+/g) || [];
   let acc = "";
   for (const sen of sentences) {
-    if ((acc + sen).trim().length <= 108) acc += sen; else break;
+    if ((acc + sen).trim().length <= 116) acc += sen; else break;
   }
   acc = acc.trim();
   if (acc.length >= 40) return acc;
 
-  let cut = s.slice(0, 104);
+  let cut = s.slice(0, 112);
   const sp = cut.lastIndexOf(" ");
   if (sp > 60) cut = cut.slice(0, sp);
   cut = cut.replace(/[\s,;:.\-–—]+$/, "").trim();
-  return cut + ".";
+  while (TRAILING_STOPWORDS.test(cut)) cut = cut.replace(TRAILING_STOPWORDS, "").trim();
+  cut = cut.replace(/[\s,;:.\-–—]+$/, "").trim();
+  return cut ? cut + "." : cut;
 }
 
 async function handleGenerateArticle(req, res) {
@@ -1602,7 +1652,10 @@ async function handleGenerateArticle(req, res) {
 
     const out = {
       headline: (parsed.headline || "").slice(0, 80),
-      bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map(clampBullet) : [],
+      // Raw-normalize only (no clamp yet) so the repair pass sees full text.
+      bullets: Array.isArray(parsed.bullets)
+        ? parsed.bullets.slice(0, 4).map((x) => String(x).replace(/\s+/g, " ").trim())
+        : [],
       tweet: clampTweet(parsed.tweet || ""),
       flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
     };
@@ -1610,6 +1663,16 @@ async function handleGenerateArticle(req, res) {
       sendJson(res, 502, { error: "AI returned an incomplete package.", raw: parsed });
       return;
     }
+
+    // Self-repair any bullet that overflows or reads as a fragment, then clamp.
+    if (out.bullets.some((b) => !bulletIsValid(b))) {
+      const repaired = await repairBullets(headline, articleText, out.bullets);
+      if (repaired) {
+        console.log("✓ bullets self-repaired");
+        out.bullets = repaired;
+      }
+    }
+    out.bullets = out.bullets.map(clampBullet);
 
     console.log(`✓ AI article (${Date.now() - t0}ms): "${out.headline}"`);
     sendJson(res, 200, out);
