@@ -1482,7 +1482,8 @@ const EDITORIAL_SYSTEM_PROMPT = [
   "FORMAT RULES:",
   "1. headline: max 60 characters. Newspaper style. Correct sentence capitalisation (capitalise first word and proper nouns only). No repeated phrases from the bullets. No periods in initials (write PM, US, UK — never P.M., U.S.).",
   "2. bullets: exactly 4 bullet points covering the most important parts of the news. Each bullet MUST be between 100 and 105 characters long including spaces — a full, self-contained point: what happened plus who/where/the key figure or consequence. Never go below 100 or above 105 characters. Do not repeat the headline's phrasing.",
-  "3. tweet: within 280 characters. No dashes of any kind. British English spelling (organise, colour, labour). Facts first — lead with what happened, not opinion. May end with 1-2 relevant hashtags if room allows.",
+  "3. tweet: within 280 characters TOTAL including hashtags. No dashes of any kind. British English spelling (organise, colour, labour). Facts first — lead with what happened, not opinion. Write the sentence(s), then a line break, then the hashtags.",
+  "4. hashtags: end every tweet with 5 to 7 hashtags. Each must be CamelCase with no spaces or punctuation (e.g. #AmitabhBachchan #AyodhyaLand #RealEstateIndia). Order them most-specific first: full person names and place/event names, then 2 to 3 broader topical tags for reach (e.g. #IndianPolitics, #Cricket, #Bollywood, #TechNews, #Markets). Do NOT use generic filler tags like #News, #Update, #Viral, #Trending, or #BreakingNews. No duplicate tags.",
   "",
   "EDITORIAL RULES:",
   "- Verify claims against the provided source text; if a claim in the headline is not supported by the text, or the story touches something sensitive, add a short note to flags (empty array if none).",
@@ -1496,6 +1497,17 @@ const EDITORIAL_SYSTEM_PROMPT = [
   "",
   "Output ONLY the JSON object. No prose around it.",
 ].join("\n");
+
+// Keep the tweet ≤280 chars, trimming at whitespace so a trailing hashtag
+// is never cut mid-word.
+function clampTweet(s) {
+  s = String(s).replace(/[ \t]+\n/g, "\n").trim();
+  if (s.length <= 280) return s;
+  let cut = s.slice(0, 280);
+  const boundary = Math.max(cut.lastIndexOf(" "), cut.lastIndexOf("\n"));
+  if (boundary > 240) cut = cut.slice(0, boundary);
+  return cut.trim();
+}
 
 // Hard-cap a bullet at 105 chars, trimming at a word boundary (no ellipsis).
 function clampBullet(s) {
@@ -1578,7 +1590,7 @@ async function handleGenerateArticle(req, res) {
     const out = {
       headline: (parsed.headline || "").slice(0, 80),
       bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4).map(clampBullet) : [],
-      tweet: (parsed.tweet || "").slice(0, 280),
+      tweet: clampTweet(parsed.tweet || ""),
       flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
     };
     if (!out.headline || out.bullets.length < 4 || !out.tweet) {
