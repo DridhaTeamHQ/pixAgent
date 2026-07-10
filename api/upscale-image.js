@@ -3,7 +3,7 @@
 // Two-stage pipeline:
 //   1. gpt-4o-mini (vision) looks at the photo and writes a precise
 //      description — who is in it, notable faces, text, setting. (~$0.001)
-//   2. gpt-image-1 (quality=high, input_fidelity=high) performs the
+//   2. gpt-image-1.5 (quality from IMAGE_QUALITY, input_fidelity=high) does
 //      enhancement with that description embedded in the prompt, so the
 //      model knows exactly what it is looking at and what it must NOT
 //      change. input_fidelity=high is OpenAI's control for preserving
@@ -133,8 +133,9 @@ export default async function handler(req, res) {
     const sizeHint = (req.headers["x-image-orientation"] || "").toString();
     const size = sizeForRatio(posterRatio, sizeHint);
 
-    // Identity preservation beats cost for news photos — default high.
-    const quality = (process.env.IMAGE_QUALITY || "high").toLowerCase();
+    // Default medium: input_fidelity=high (kept) does the face preservation;
+    // quality mostly buys texture. high≈$0.25, medium≈$0.06, low≈$0.016.
+    const quality = (process.env.IMAGE_QUALITY || "medium").toLowerCase();
 
     const t0 = Date.now();
 

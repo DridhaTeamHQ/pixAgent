@@ -1825,8 +1825,9 @@ async function handleUpscaleImage(req, res) {
     const sizeHint = (req.headers["x-image-orientation"] || "").toString();
     const size = sizeForRatio(posterRatio, sizeHint);
 
-    // Identity preservation beats cost for news photos — default high.
-    const quality = (process.env.IMAGE_QUALITY || "high").toLowerCase();
+    // Default medium: input_fidelity=high (kept) does the face preservation;
+    // quality mostly buys texture. high≈$0.25, medium≈$0.06, low≈$0.016.
+    const quality = (process.env.IMAGE_QUALITY || "medium").toLowerCase();
 
     const t0 = Date.now();
 

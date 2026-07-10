@@ -1427,28 +1427,20 @@ async function fetchStockImages(headline, options = {}) {
 
     let images = [];
 
-    // 2. Try Flux generation first when FAL_KEY is configured server-side.
-    try {
-      const fluxUrl = `/api/flux-image?query=${encodeURIComponent(searchQuery)}${imageContext ? `&context=${encodeURIComponent(imageContext)}` : ""}`;
-      const fRes = await fetch(fluxUrl);
-      const fData = await fRes.json();
-      if (fRes.ok && fData.images?.length) {
-        images = fData.images;
-      }
-    } catch { /* Flux failed, try Web / News Images */ }
+    // COST ORDER: free sources first. Flux (fal.ai) BILLS PER GENERATION, so
+    // it only runs as the last resort when both free sources return nothing —
+    // previously it fired first on every scrape and quietly burned credits.
 
-    // 3. Try Web / News Images next (Bing -> Google -> DDG)
+    // 2. Web / News images (free: Bing -> Google -> DDG)
     try {
-      if (!images.length) {
-        const gRes = await fetch(`/api/google-images?query=${encodeURIComponent(searchQuery)}`);
-        const gData = await gRes.json();
-        if (gRes.ok && gData.images?.length) {
-          images = gData.images;
-        }
+      const gRes = await fetch(`/api/google-images?query=${encodeURIComponent(searchQuery)}`);
+      const gData = await gRes.json();
+      if (gRes.ok && gData.images?.length) {
+        images = gData.images;
       }
     } catch { /* Web images failed, try Stock Pexels */ }
 
-    // 4. Fallback to Pexels if Flux and web photos returned nothing.
+    // 3. Pexels stock (free tier)
     if (!images.length) {
       try {
         const pRes = await fetch(`/api/stock-images?query=${encodeURIComponent(searchQuery)}`);
@@ -1457,6 +1449,18 @@ async function fetchStockImages(headline, options = {}) {
           images = pData.images;
         }
       } catch { /* Pexels also failed */ }
+    }
+
+    // 4. Flux generation — PAID, last resort only.
+    if (!images.length) {
+      try {
+        const fluxUrl = `/api/flux-image?query=${encodeURIComponent(searchQuery)}${imageContext ? `&context=${encodeURIComponent(imageContext)}` : ""}`;
+        const fRes = await fetch(fluxUrl);
+        const fData = await fRes.json();
+        if (fRes.ok && fData.images?.length) {
+          images = fData.images;
+        }
+      } catch { /* Flux failed too */ }
     }
 
     if (!images.length) {
