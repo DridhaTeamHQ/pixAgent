@@ -1791,6 +1791,40 @@ async function describeImageForEnhance(buffer, mime) {
   }
 }
 
+// Primary engine: the self-hosted CodeFormer + Real-ESRGAN service on Railway
+// (pixel-faithful, never regenerates faces). Returns a PNG data URL, or null
+// if the service isn't configured / errors / times out — caller then falls
+// back to gpt-image-1.5.
+async function tryRailwayUpscale(buffer, mime) {
+  const base = (process.env.UPSCALER_URL || secrets.UPSCALER_URL || "").replace(/\/+$/, "");
+  if (!base) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 285000);
+  try {
+    const r = await fetch(`${base}/enhance`, {
+      method: "POST",
+      headers: {
+        "Content-Type": mime,
+        "X-Secret": process.env.UPSCALER_SECRET || secrets.UPSCALER_SECRET || "",
+      },
+      body: buffer,
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      console.warn(`⚠ Railway upscaler ${r.status} — falling back to gpt-image`);
+      return null;
+    }
+    const out = Buffer.from(await r.arrayBuffer());
+    if (out.length < 1000) return null;
+    return `data:image/png;base64,${out.toString("base64")}`;
+  } catch (e) {
+    console.warn("⚠ Railway upscaler unreachable — falling back to gpt-image:", e.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function handleUpscaleImage(req, res) {
   if (!openaiApiKey) {
     sendJson(res, 503, { error: "OPENAI_API_KEY not set on server." });
@@ -1817,6 +1851,16 @@ async function handleUpscaleImage(req, res) {
     }
     const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
     const headline = decodeURIComponent(req.headers["x-headline"] || "").trim().slice(0, 200);
+
+    // PRIMARY: self-hosted CodeFormer + Real-ESRGAN on Railway (pixel-faithful).
+    const railwayT0 = Date.now();
+    const railwayImage = await tryRailwayUpscale(buffer, mime);
+    if (railwayImage) {
+      console.log(`✓ AI enhance via Railway (codeformer) in ${Date.now() - railwayT0}ms`);
+      sendJson(res, 200, { image: railwayImage, engine: "codeformer" });
+      return;
+    }
+    // else fall through to gpt-image-1.5 ↓
 
     // The SELECTED POSTER RATIO drives the output size, so a 9:16 poster
     // gets a portrait image (outpainted if the source is landscape) instead
@@ -1878,7 +1922,7 @@ async function handleUpscaleImage(req, res) {
     }
 
     console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${modelUsed}, ${size}, quality=${quality})`);
-    sendJson(res, 200, { image: `data:image/png;base64,${b64}`, context: description });
+    sendJson(res, 200, { image: `data:image/png;base64,${b64}`, context: description, engine: modelUsed });
   } catch (err) {
     console.error("✗ upscale-image error:", err);
     sendJson(res, 500, { error: err.message || "Image enhance failed." });

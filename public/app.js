@@ -2870,7 +2870,10 @@ if (aiEnhanceBtn) {
       await ensureImageFocalPoint(enhanced);
       state.mainImage = enhanced;
       renderPoster();
-      setEnhanceStatus("✓ Enhanced! Re-pick a stock image to undo.", "success");
+      const engineLabel = data.engine === "codeformer"
+        ? "CodeFormer (self-hosted, free)"
+        : (data.engine || "AI");
+      setEnhanceStatus(`✓ Enhanced via ${engineLabel}. Re-pick a stock image to undo.`, "success");
     } catch (err) {
       setEnhanceStatus(`Enhance failed: ${err.message}`, "error");
     } finally {
