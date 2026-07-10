@@ -12,7 +12,7 @@ export const EDITORIAL_SYSTEM_PROMPT = [
   '{ "headline": string, "bullets": [string, string, string], "tweet": string, "flags": [string] }',
   "",
   "SLIDE 1 — the \"headline\" field:",
-  "- Maximum 60 characters.",
+  "- Maximum 55 characters.",
   "- Clean newspaper-summary style: not punchy, not sensational, not clickbaity, but it should invoke curiosity.",
   "- Clearly and specifically summarise what the story is about. Be specific — name which World Cup, which year, which city, who the person is.",
   "- Avoid vague phrasing like 'boosts sentiment' or 'makes waves'.",
@@ -20,7 +20,7 @@ export const EDITORIAL_SYSTEM_PROMPT = [
   "- Never reuse the headline's exact phrasing in the bullets.",
   "",
   "SLIDE 2 — the \"bullets\" field: EXACTLY 3 bullet points (a context card).",
-  "- Each bullet is 100 to 110 characters including spaces.",
+  "- Each bullet is 80 to 90 characters including spaces.",
   "- The three bullets flow naturally and build on each other, in this order: (1) context or background, (2) what happened, (3) another point of view or a value-add.",
   "- Each bullet is ONE complete sentence — never cut off midway, never trailing off.",
   "- No em dashes; let sentences flow naturally. No periods between initials (MS Dhoni not M.S. Dhoni).",
@@ -43,18 +43,29 @@ export const EDITORIAL_SYSTEM_PROMPT = [
   "- Do not present promotional or sponsored content as news.",
   "- Safe reporting for deaths, suicide and tragedy: no method details, no sensationalising, neutral tone.",
   "",
-  "EXAMPLE bullets (3, each a complete sentence, 100-110 chars, context then what-happened then value-add):",
-  '- "Amitabh Bachchan, the veteran Bollywood actor, has steadily expanded his property holdings in recent years."',
-  '- "Developer Abhinandan Lodha says Bachchan wired Rs 15 crore for a plot in Ayodhya within a single day."',
-  '- "The swift purchase reflects rising celebrity interest in Ayodhya\'s fast-growing real estate market."',
+  "EXAMPLE bullets (3, each a complete sentence, 80-90 chars, context then what-happened then value-add):",
+  '- "Amitabh Bachchan, the veteran Bollywood actor, has been expanding his property holdings."',
+  '- "Developer Abhinandan Lodha says Bachchan wired Rs 15 crore for the plot in one day."',
+  '- "The swift deal reflects growing celebrity interest in Ayodhya\'s property market."',
   "",
   "Output ONLY the JSON object. No prose around it.",
 ].join("\n");
 
+// Spec: every @handle/#hashtag after the CTA line is lowercase. The model
+// occasionally keeps official casing (@RBI) — enforce deterministically.
+function lowercaseTagLines(tweet) {
+  const lines = String(tweet).split("\n");
+  const ctaIdx = lines.findIndex((l) => /follow\s+@shortly__news/i.test(l));
+  if (ctaIdx >= 0) {
+    for (let i = ctaIdx + 1; i < lines.length; i++) lines[i] = lines[i].toLowerCase();
+  }
+  return lines.join("\n");
+}
+
 // Keep the tweet ≤280 chars, trimming at whitespace so a trailing hashtag
 // is never cut mid-word.
 function clampTweet(s) {
-  s = String(s).replace(/[ \t]+\n/g, "\n").trim();
+  s = lowercaseTagLines(String(s).replace(/[ \t]+\n/g, "\n").trim());
   if (s.length <= 280) return s;
   let cut = s.slice(0, 280);
   const sp = cut.lastIndexOf(" ");
@@ -67,8 +78,8 @@ function clampTweet(s) {
 // A bullet is "good" when it's a complete sentence in the target band.
 function bulletIsValid(b) {
   const t = String(b).trim();
-  // Target 100-110; allow a little slack, but flag real overflows/fragments.
-  if (t.length < 90 || t.length > 116) return false;
+  // Target 80-90; allow a little slack, but flag real overflows/fragments.
+  if (t.length < 70 || t.length > 96) return false;
   if (!/[.!?]["')\]]?$/.test(t)) return false;
   // Reject sentences that trail off on a function word (e.g. "...and.")
   const core = t.replace(/[.!?"')\]]+$/, "").trim();
@@ -81,7 +92,7 @@ function bulletIsValid(b) {
 // Returns 4 rewritten strings or null on any failure (caller keeps originals).
 async function repairBullets(apiKey, headline, articleText, bullets) {
   const prompt =
-    "Rewrite these 3 news bullet points so EACH one is a single complete sentence that ends with a full stop and is between 100 and 110 characters long including spaces. Keep the same facts and meaning; add no new facts; do not let any sentence trail off. Return STRICT JSON: { \"bullets\": [3 strings] }.\n\n" +
+    "Rewrite these 3 news bullet points so EACH one is a single complete sentence that ends with a full stop and is between 80 and 90 characters long including spaces. Keep the same facts and meaning; add no new facts; do not let any sentence trail off. Return STRICT JSON: { \"bullets\": [3 strings] }.\n\n" +
     (headline ? `Headline: ${headline}\n` : "") +
     (articleText ? `Article: ${articleText.slice(0, 500)}\n` : "") +
     "Bullets to fix:\n" + bullets.map((b, i) => `${i + 1}. ${b}`).join("\n");
@@ -115,24 +126,24 @@ const TRAILING_STOPWORDS = /\s+(and|or|but|to|of|in|on|at|for|with|the|a|an|its|
 
 function clampBullet(s) {
   s = String(s).replace(/\s+/g, " ").trim();
-  // Complete sentences up to 118 chars pass untouched — a whole sentence
+  // Complete sentences up to 98 chars pass untouched — a whole sentence
   // slightly long beats a trimmed fragment.
-  if (s.length <= 118) return s;
+  if (s.length <= 98) return s;
 
   // Prefer the longest run of complete sentences within budget.
   const sentences = s.match(/[^.!?]+[.!?]+/g) || [];
   let acc = "";
   for (const sen of sentences) {
-    if ((acc + sen).trim().length <= 116) acc += sen; else break;
+    if ((acc + sen).trim().length <= 96) acc += sen; else break;
   }
   acc = acc.trim();
   if (acc.length >= 40) return acc;
 
   // Single over-long sentence: trim at a word boundary, then drop any dangling
   // function word so it never ends on "and.", "to.", "of." etc.
-  let cut = s.slice(0, 112);
+  let cut = s.slice(0, 92);
   const sp = cut.lastIndexOf(" ");
-  if (sp > 60) cut = cut.slice(0, sp);
+  if (sp > 50) cut = cut.slice(0, sp);
   cut = cut.replace(/[\s,;:.\-–—]+$/, "").trim();
   while (TRAILING_STOPWORDS.test(cut)) cut = cut.replace(TRAILING_STOPWORDS, "").trim();
   cut = cut.replace(/[\s,;:.\-–—]+$/, "").trim();

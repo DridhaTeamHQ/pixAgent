@@ -2736,8 +2736,8 @@ function renderArticle({ headline, bullets, tweet, flags }) {
 
   headEl.textContent = headline;
   const headCount = document.getElementById("article-headline-count");
-  headCount.textContent = `${headline.length} / 60`;
-  headCount.classList.toggle("over", headline.length > 60);
+  headCount.textContent = `${headline.length} / 55`;
+  headCount.classList.toggle("over", headline.length > 55);
 
   bulletEl.innerHTML = "";
   bullets.forEach(b => {
