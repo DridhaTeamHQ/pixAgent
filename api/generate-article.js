@@ -13,14 +13,15 @@ export const EDITORIAL_SYSTEM_PROMPT = [
   "",
   "SLIDE 1 — the \"headline\" field:",
   "- Maximum 55 characters.",
-  "- Clean newspaper-summary style: not punchy, not sensational, not clickbaity, but it should invoke curiosity.",
+  "- Use VERY SIMPLE, plain, conversational everyday English — the way you would casually tell a friend what happened. Short common words, no jargon, no formal or complex vocabulary.",
+  "- Not punchy, not sensational, not clickbaity, but it should make the reader curious.",
   "- Clearly and specifically summarise what the story is about. Be specific — name which World Cup, which year, which city, who the person is.",
   "- Avoid vague phrasing like 'boosts sentiment' or 'makes waves'.",
   "- Correct sentence capitalisation. No periods between initials (write MS Dhoni, PM, US, UK — never M.S. Dhoni).",
   "- Never reuse the headline's exact phrasing in the bullets.",
   "",
   "SLIDE 2 — the \"bullets\" field: EXACTLY 3 bullet points (a context card).",
-  "- Each bullet is 80 to 90 characters including spaces.",
+  "- Each bullet is NO MORE THAN 80 characters including spaces (aim for 65 to 80). NEVER exceed 80 characters.",
   "- The three bullets flow naturally and build on each other, in this order: (1) context or background, (2) what happened, (3) another point of view or a value-add.",
   "- Each bullet is ONE complete sentence — never cut off midway, never trailing off.",
   "- No em dashes; let sentences flow naturally. No periods between initials (MS Dhoni not M.S. Dhoni).",
@@ -43,10 +44,10 @@ export const EDITORIAL_SYSTEM_PROMPT = [
   "- Do not present promotional or sponsored content as news.",
   "- Safe reporting for deaths, suicide and tragedy: no method details, no sensationalising, neutral tone.",
   "",
-  "EXAMPLE bullets (3, each a complete sentence, 80-90 chars, context then what-happened then value-add):",
-  '- "Amitabh Bachchan, the veteran Bollywood actor, has been expanding his property holdings."',
-  '- "Developer Abhinandan Lodha says Bachchan wired Rs 15 crore for the plot in one day."',
-  '- "The swift deal reflects growing celebrity interest in Ayodhya\'s property market."',
+  "EXAMPLE bullets (3, each a complete sentence, max 80 chars, context then what-happened then value-add):",
+  '- "Amitabh Bachchan, a top Bollywood actor, has been buying more property lately."',
+  '- "Developer Abhinandan Lodha says Bachchan paid Rs 15 crore for a plot in a day."',
+  '- "The quick deal shows more stars are eyeing Ayodhya\'s fast-growing land market."',
   "",
   "Output ONLY the JSON object. No prose around it.",
 ].join("\n");
@@ -79,7 +80,7 @@ function clampTweet(s) {
 function bulletIsValid(b) {
   const t = String(b).trim();
   // Target 80-90; allow a little slack, but flag real overflows/fragments.
-  if (t.length < 70 || t.length > 96) return false;
+  if (t.length < 50 || t.length > 84) return false;
   if (!/[.!?]["')\]]?$/.test(t)) return false;
   // Reject sentences that trail off on a function word (e.g. "...and.")
   const core = t.replace(/[.!?"')\]]+$/, "").trim();
@@ -92,7 +93,7 @@ function bulletIsValid(b) {
 // Returns 4 rewritten strings or null on any failure (caller keeps originals).
 async function repairBullets(apiKey, headline, articleText, bullets) {
   const prompt =
-    "Rewrite these 3 news bullet points so EACH one is a single complete sentence that ends with a full stop and is between 80 and 90 characters long including spaces. Keep the same facts and meaning; add no new facts; do not let any sentence trail off. Return STRICT JSON: { \"bullets\": [3 strings] }.\n\n" +
+    "Rewrite these 3 news bullet points so EACH one is a single complete sentence that ends with a full stop and is between 65 and 80 characters long including spaces (never over 80). Keep the same facts and meaning; add no new facts; do not let any sentence trail off. Return STRICT JSON: { \"bullets\": [3 strings] }.\n\n" +
     (headline ? `Headline: ${headline}\n` : "") +
     (articleText ? `Article: ${articleText.slice(0, 500)}\n` : "") +
     "Bullets to fix:\n" + bullets.map((b, i) => `${i + 1}. ${b}`).join("\n");
@@ -126,24 +127,27 @@ const TRAILING_STOPWORDS = /\s+(and|or|but|to|of|in|on|at|for|with|the|a|an|its|
 
 function clampBullet(s) {
   s = String(s).replace(/\s+/g, " ").trim();
-  // Complete sentences up to 98 chars pass untouched — a whole sentence
+  // Complete sentences up to 84 chars pass untouched — a whole sentence
   // slightly long beats a trimmed fragment.
-  if (s.length <= 98) return s;
+  if (s.length <= 84) return s;
 
-  // Prefer the longest run of complete sentences within budget.
-  const sentences = s.match(/[^.!?]+[.!?]+/g) || [];
+  // Prefer the longest run of complete sentences within budget. Mask decimal
+  // points first (6.5, Rs 1.2) so they aren't mistaken for sentence ends.
+  const MASK = String.fromCharCode(0xE000);
+  const masked = s.replace(/(\d)\.(\d)/g, `$1${MASK}$2`);
+  const sentences = masked.match(/[^.!?]+[.!?]+/g) || [];
   let acc = "";
   for (const sen of sentences) {
-    if ((acc + sen).trim().length <= 96) acc += sen; else break;
+    if ((acc + sen).trim().length <= 82) acc += sen; else break;
   }
-  acc = acc.trim();
-  if (acc.length >= 40) return acc;
+  acc = acc.split(MASK).join(".").trim();
+  if (acc.length >= 55) return acc;   // else too short a fragment — trim instead
 
   // Single over-long sentence: trim at a word boundary, then drop any dangling
   // function word so it never ends on "and.", "to.", "of." etc.
-  let cut = s.slice(0, 92);
+  let cut = s.slice(0, 78);
   const sp = cut.lastIndexOf(" ");
-  if (sp > 50) cut = cut.slice(0, sp);
+  if (sp > 45) cut = cut.slice(0, sp);
   cut = cut.replace(/[\s,;:.\-–—]+$/, "").trim();
   while (TRAILING_STOPWORDS.test(cut)) cut = cut.replace(TRAILING_STOPWORDS, "").trim();
   cut = cut.replace(/[\s,;:.\-–—]+$/, "").trim();
