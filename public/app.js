@@ -1224,6 +1224,29 @@ function validateImageFile(file) {
   return true;
 }
 
+function isEditableElement(element) {
+  return Boolean(
+    element?.closest?.(
+      'input:not([type="button"]):not([type="checkbox"]):not([type="color"]):not([type="file"]):not([type="radio"]):not([type="range"]), textarea, [contenteditable="true"]'
+    )
+  );
+}
+
+function extractImageUrlFromHtml(html) {
+  if (!html) return "";
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const image = doc.querySelector("img[src]");
+    return image?.src || "";
+  } catch {
+    return "";
+  }
+}
+
+function isLikelyWebUrl(value) {
+  return /^https?:\/\//i.test((value || "").trim());
+}
+
 function loadBackgroundImageFile(file, sourceLabel = "Custom image") {
   if (!validateImageFile(file)) return;
   const uploadNonce = claimImageSelection();
@@ -1248,8 +1271,76 @@ function loadBackgroundImageFile(file, sourceLabel = "Custom image") {
   reader.readAsDataURL(file);
 }
 
+async function loadBackgroundImageUrl(url, sourceLabel = "Pasted image") {
+  const trimmedUrl = (url || "").trim();
+  if (!isLikelyWebUrl(trimmedUrl)) {
+    setStatus("Paste a direct image, an image URL, or drag in an image file.", "error");
+    return false;
+  }
+
+  const uploadNonce = claimImageSelection();
+  state.productImageAnalysis = null;
+
+  try {
+    setStatus("Loading pasted image...");
+    const proxiedUrl = `/api/image?url=${encodeURIComponent(trimmedUrl)}`;
+    const img = await imageFromUrl(proxiedUrl);
+    if (state.imageSelectionNonce !== uploadNonce) return true;
+    state.mainImage = img;
+    resetImageControls();
+    editPanel.hidden = false;
+    imagePanel.hidden = false;
+    renderPoster();
+    setStatus(`${sourceLabel} loaded!`, "success");
+    try {
+      analyzeUploadedProductImage(proxiedUrl, uploadNonce);
+    } catch (error) {
+      console.warn("Pasted image analysis failed to start:", error);
+    }
+    return true;
+  } catch (error) {
+    console.warn("Pasted image URL load failed:", error);
+    setStatus("That pasted link did not behave like a direct image.", "error");
+    return false;
+  }
+}
+
+async function loadClipboardImageData(clipboardData) {
+  const file =
+    getFirstImageFile(clipboardData?.items) ||
+    getFirstImageFile(clipboardData?.files);
+  if (file) {
+    loadBackgroundImageFile(file, "Pasted image");
+    return true;
+  }
+
+  const html = clipboardData?.getData?.("text/html") || "";
+  const htmlImageUrl = extractImageUrlFromHtml(html);
+  if (htmlImageUrl) {
+    return loadBackgroundImageUrl(htmlImageUrl, "Pasted image");
+  }
+
+  const plainText = (clipboardData?.getData?.("text/plain") || "").trim();
+  if (isLikelyWebUrl(plainText)) {
+    return loadBackgroundImageUrl(plainText, "Pasted image");
+  }
+
+  return false;
+}
+
 async function loadBackgroundImageFromClipboard() {
   if (!navigator.clipboard?.read) {
+    if (navigator.clipboard?.readText) {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && isLikelyWebUrl(text)) {
+          await loadBackgroundImageUrl(text, "Clipboard image");
+          return;
+        }
+      } catch (error) {
+        console.warn("Clipboard text read failed:", error);
+      }
+    }
     setStatus("Clipboard paste button is not supported here. Use Ctrl+V or Cmd+V on the upload box.", "error");
     return;
   }
@@ -1258,11 +1349,21 @@ async function loadBackgroundImageFromClipboard() {
     const clipboardItems = await navigator.clipboard.read();
     for (const clipboardItem of clipboardItems) {
       const imageType = clipboardItem.types.find((type) => type.startsWith("image/"));
-      if (!imageType) continue;
-      const blob = await clipboardItem.getType(imageType);
-      const file = new File([blob], `clipboard-image.${imageType.split("/")[1] || "png"}`, { type: imageType });
-      loadBackgroundImageFile(file, "Clipboard image");
-      return;
+      if (imageType) {
+        const blob = await clipboardItem.getType(imageType);
+        const file = new File([blob], `clipboard-image.${imageType.split("/")[1] || "png"}`, { type: imageType });
+        loadBackgroundImageFile(file, "Clipboard image");
+        return;
+      }
+      if (clipboardItem.types.includes("text/html")) {
+        const html = await (await clipboardItem.getType("text/html")).text();
+        const imageUrl = extractImageUrlFromHtml(html);
+        if (imageUrl && (await loadBackgroundImageUrl(imageUrl, "Clipboard image"))) return;
+      }
+      if (clipboardItem.types.includes("text/plain")) {
+        const text = (await (await clipboardItem.getType("text/plain")).text()).trim();
+        if (text && isLikelyWebUrl(text) && (await loadBackgroundImageUrl(text, "Clipboard image"))) return;
+      }
     }
     setStatus("No image found in the clipboard.", "error");
   } catch (error) {
@@ -1294,10 +1395,10 @@ if (bgUploadZone) {
   });
 
   bgUploadZone.addEventListener("paste", (event) => {
-    const file = getFirstImageFile(event.clipboardData?.items) || getFirstImageFile(event.clipboardData?.files);
-    if (!file) return;
     event.preventDefault();
-    loadBackgroundImageFile(file, "Pasted image");
+    loadClipboardImageData(event.clipboardData).then((handled) => {
+      if (!handled) setStatus("No image found in the clipboard.", "error");
+    });
   });
 
   bgUploadZone.addEventListener("dragenter", (event) => {
@@ -1332,6 +1433,21 @@ if (bgUploadZone) {
     loadBackgroundImageFile(file, "Dropped image");
   });
 }
+
+document.addEventListener("paste", (event) => {
+  const target = event.target;
+  if (isEditableElement(target)) return;
+  const zoneFocused =
+    document.activeElement === bgUploadZone ||
+    document.activeElement === bgPasteBtn ||
+    bgUploadZone?.contains?.(document.activeElement);
+  const pasteInsideZone = bgUploadZone?.contains?.(target);
+  if (!zoneFocused && !pasteInsideZone) return;
+  event.preventDefault();
+  loadClipboardImageData(event.clipboardData).then((handled) => {
+    if (!handled) setStatus("No image found in the clipboard.", "error");
+  });
+});
 
 async function analyzeUploadedProductImage(imageData, expectedNonce) {
   try {
