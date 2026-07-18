@@ -73,29 +73,34 @@
 
   <!-- Sticky top navbar -->
   <nav class="app-nav">
-    <div class="nav-logo">
-      <span class="nav-logo-mark">Px</span>
-      <span class="nav-logo-text">Pix Post Builder</span>
-    </div>
-    <!-- View switcher: Poster canvas vs AI Article writer -->
-    <div class="view-tabs" id="view-tabs" role="tablist" aria-label="View">
-      <button type="button" class="view-tab active" data-view="poster" role="tab" aria-selected="true">
-        <svg width="14" height="14" aria-hidden="true"><use href="#i-image"/></svg>
-        Poster
-      </button>
-      <button type="button" class="view-tab" data-view="article" role="tab" aria-selected="false">
-        <svg width="14" height="14" aria-hidden="true"><use href="#i-doc"/></svg>
-        Article
-      </button>
-    </div>
+    <!-- Inner rail: same max-width + centering as .app-shell so the logo lines
+         up with the first column and the actions with the preview's right edge.
+         Equal-flex side groups keep the view tabs perfectly centered. -->
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <span class="nav-logo-mark">Px</span>
+        <span class="nav-logo-text">Pix Post Builder</span>
+      </div>
+      <!-- View switcher: Poster canvas vs AI Article writer -->
+      <div class="view-tabs" id="view-tabs" role="tablist" aria-label="View">
+        <button type="button" class="view-tab active" data-view="poster" role="tab" aria-selected="true">
+          <svg width="14" height="14" aria-hidden="true"><use href="#i-image"/></svg>
+          Poster
+        </button>
+        <button type="button" class="view-tab" data-view="article" role="tab" aria-selected="false">
+          <svg width="14" height="14" aria-hidden="true"><use href="#i-doc"/></svg>
+          Article
+        </button>
+      </div>
 
-    <div class="nav-actions">
-      <a class="nav-link" href="https://shortlyagents.vercel.app/">Shortly Agents</a>
-      <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch theme">
-        <svg class="icon-sun" width="15" height="15" aria-hidden="true"><use href="#i-sun"/></svg>
-        <svg class="icon-moon" width="15" height="15" aria-hidden="true"><use href="#i-moon"/></svg>
-      </button>
-      <span class="nav-badge">Beta</span>
+      <div class="nav-actions">
+        <a class="nav-link" href="https://shortlyagents.vercel.app/">Shortly Agents</a>
+        <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch theme">
+          <svg class="icon-sun" width="15" height="15" aria-hidden="true"><use href="#i-sun"/></svg>
+          <svg class="icon-moon" width="15" height="15" aria-hidden="true"><use href="#i-moon"/></svg>
+        </button>
+        <span class="nav-badge">Beta</span>
+      </div>
     </div>
   </nav>
 
@@ -286,12 +291,16 @@
         </button>
         <div class="acc-body"><div class="acc-inner">
           <h3 class="acc-subtitle">Custom Upload</h3>
-          <label class="upload-zone">
+          <label class="upload-zone" id="bg-upload-zone" tabindex="0">
             <svg class="upload-icon" width="18" height="18" aria-hidden="true"><use href="#i-upload"/></svg>
-            <span class="upload-text">Drop an image or <em>browse</em></span>
-            <span class="upload-hint">PNG, JPG up to 10 MB</span>
+            <span class="upload-text">Drag, drop, paste, or <em>browse</em></span>
+            <span class="upload-hint">PNG, JPG, or WebP up to 10 MB</span>
             <input type="file" id="bg-image-upload" accept="image/*" />
           </label>
+          <div class="upload-actions">
+            <button type="button" id="bg-paste-btn" class="btn-secondary upload-action-btn">Paste image</button>
+            <span class="upload-shortcut">Tip: copy an image, then press Ctrl+V or Cmd+V here.</span>
+          </div>
 
           <!-- gpt-image-1 enhance: regenerates the background at higher clarity -->
           <button type="button" id="ai-enhance-btn" class="btn-ai" disabled>

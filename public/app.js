@@ -119,6 +119,8 @@ const imgOffsetX = document.getElementById("img-offset-x");
 const imgOffsetY = document.getElementById("img-offset-y");
 const imgResetBtn = document.getElementById("img-reset-btn");
 const bgImageUpload = document.getElementById("bg-image-upload");
+const bgUploadZone = document.getElementById("bg-upload-zone");
+const bgPasteBtn = document.getElementById("bg-paste-btn");
 const stockImagesSection = document.getElementById("stock-images-section");
 const stockImagesGrid = document.getElementById("stock-images-grid");
 const imgZoom = document.getElementById("img-zoom");
@@ -1193,9 +1195,37 @@ window.addEventListener("resize", () => {
 });
 
 // Background image upload
-bgImageUpload.addEventListener("change", (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+function getFirstImageFile(collection) {
+  if (!collection) return null;
+  for (const item of collection) {
+    if (item?.type?.startsWith("image/")) {
+      if (typeof item.getAsFile === "function") return item.getAsFile();
+      return item;
+    }
+  }
+  return null;
+}
+
+function validateImageFile(file) {
+  if (!file) {
+    setStatus("No image found.", "error");
+    return false;
+  }
+  if (!file.type || !file.type.startsWith("image/")) {
+    setStatus("Please use an image file.", "error");
+    return false;
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    setStatus("Image is too large. Use a file under 10 MB.", "error");
+    return false;
+  }
+  return true;
+}
+
+function loadBackgroundImageFile(file, sourceLabel = "Custom image") {
+  if (!validateImageFile(file)) return;
   const uploadNonce = claimImageSelection();
   state.productImageAnalysis = null;
   const reader = new FileReader();
@@ -1209,14 +1239,99 @@ bgImageUpload.addEventListener("change", (e) => {
       editPanel.hidden = false;
       imagePanel.hidden = false;
       renderPoster();
-      setStatus("Custom image loaded!", "success");
+      setStatus(`${sourceLabel} loaded!`, "success");
       bgImageUpload.value = "";
       analyzeUploadedProductImage(ev.target.result, uploadNonce);
     };
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
+}
+
+async function loadBackgroundImageFromClipboard() {
+  if (!navigator.clipboard?.read) {
+    setStatus("Clipboard paste button is not supported here. Use Ctrl+V or Cmd+V on the upload box.", "error");
+    return;
+  }
+
+  try {
+    const clipboardItems = await navigator.clipboard.read();
+    for (const clipboardItem of clipboardItems) {
+      const imageType = clipboardItem.types.find((type) => type.startsWith("image/"));
+      if (!imageType) continue;
+      const blob = await clipboardItem.getType(imageType);
+      const file = new File([blob], `clipboard-image.${imageType.split("/")[1] || "png"}`, { type: imageType });
+      loadBackgroundImageFile(file, "Clipboard image");
+      return;
+    }
+    setStatus("No image found in the clipboard.", "error");
+  } catch (error) {
+    console.warn("Clipboard image read failed:", error);
+    setStatus("Clipboard access was blocked. Copy an image, then use Ctrl+V or Cmd+V on the upload box.", "error");
+  }
+}
+
+bgImageUpload.addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  loadBackgroundImageFile(file);
 });
+
+if (bgPasteBtn) {
+  bgPasteBtn.addEventListener("click", () => {
+    loadBackgroundImageFromClipboard();
+  });
+}
+
+if (bgUploadZone) {
+  let dragDepth = 0;
+
+  bgUploadZone.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      bgImageUpload.click();
+    }
+  });
+
+  bgUploadZone.addEventListener("paste", (event) => {
+    const file = getFirstImageFile(event.clipboardData?.items) || getFirstImageFile(event.clipboardData?.files);
+    if (!file) return;
+    event.preventDefault();
+    loadBackgroundImageFile(file, "Pasted image");
+  });
+
+  bgUploadZone.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+    dragDepth += 1;
+    bgUploadZone.classList.add("is-dragover");
+  });
+
+  bgUploadZone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    bgUploadZone.classList.add("is-dragover");
+  });
+
+  bgUploadZone.addEventListener("dragleave", (event) => {
+    event.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth || event.target === bgUploadZone) {
+      bgUploadZone.classList.remove("is-dragover");
+    }
+  });
+
+  bgUploadZone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dragDepth = 0;
+    bgUploadZone.classList.remove("is-dragover");
+    const file = getFirstImageFile(event.dataTransfer?.files) || getFirstImageFile(event.dataTransfer?.items);
+    if (!file) {
+      setStatus("Drop an image file to use it as the background.", "error");
+      return;
+    }
+    loadBackgroundImageFile(file, "Dropped image");
+  });
+}
 
 async function analyzeUploadedProductImage(imageData, expectedNonce) {
   try {

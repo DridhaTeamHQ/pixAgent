@@ -256,19 +256,31 @@ button:focus-visible,
   z-index: 100;
   height: calc(var(--nav-height) + env(safe-area-inset-top));
   padding-top: env(safe-area-inset-top);
-  padding-left: max(28px, env(safe-area-inset-left));
-  padding-right: max(28px, env(safe-area-inset-right));
+  /* Full-bleed bar (background + border span the viewport); the horizontal
+     gutter lives on .nav-inner so nav content aligns with the app-shell. */
   display: flex;
-  align-items: center;
-  justify-content: space-between;
   border-bottom: 1px solid var(--border-color);
   backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
   background: rgba(255, 255, 255, 0.72);
 }
 
+/* Centered inner rail — mirrors .app-shell's width + auto margins so the logo
+   lines up with the first column and the actions with the preview's right edge.
+   The two side groups (logo, actions) flex-grow equally, which pins the middle
+   view-tabs to the true center regardless of how wide either side is. */
+.nav-inner {
+  width: min(1380px, 100vw - 40px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .nav-logo {
   display: flex;
+  flex: 1 1 0;
+  min-width: 0;
   align-items: center;
   gap: 10px;
   font-weight: 700;
@@ -306,7 +318,10 @@ button:focus-visible,
 
 .nav-actions {
   display: flex;
+  flex: 1 1 0;
+  min-width: 0;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -315,6 +330,7 @@ button:focus-visible,
   font-size: 0.78rem;
   font-weight: 700;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .nav-link:hover {
@@ -842,6 +858,13 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background: rgba(155, 114, 239, 0.05);
 }
 
+.upload-zone.is-dragover,
+.upload-zone:focus-visible {
+  border-color: rgba(124, 58, 237, 0.7);
+  background: rgba(124, 58, 237, 0.08);
+  box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.12);
+}
+
 .upload-zone:hover .upload-icon { color: var(--accent); transform: translateY(-1px); }
 
 .upload-zone input[type="file"] {
@@ -875,6 +898,26 @@ input[type="range"]::-webkit-slider-thumb:hover {
   color: var(--text-muted);
   pointer-events: none;
   letter-spacing: 0.02em;
+}
+
+.upload-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.upload-action-btn {
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.upload-shortcut {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
 }
 
 /* ─── Stock Grid ─────────────────────────────────────────────── */
@@ -1118,6 +1161,7 @@ canvas.dragging { cursor: grabbing; }
 /* ─── Navbar view switcher (Poster | Article) ─────────────── */
 .view-tabs {
   display: flex;
+  flex: 0 0 auto;
   gap: 3px;
   background: var(--surface-input);
   border: 1px solid var(--border-color);
@@ -1368,14 +1412,25 @@ body.view-article .edit-sheet { display: none !important; }
 
   .app-nav {
     height: 50px;
-    padding: 0 12px;
+    padding: 0;
+  }
+  /* Match the mobile .app-shell gutter (100vw - 14px) so the logo sits
+     directly above the poster card's left edge. */
+  .nav-inner {
+    width: calc(100vw - 14px);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    gap: 8px;
   }
   .nav-logo { font-size: 0.85rem; gap: 8px; }
   .nav-logo-mark { width: 26px; height: 26px; font-size: 0.68rem; }
   /* Tight navbar: drop the wordmark + badge so the view tabs fit */
   .nav-logo-text { display: none; }
   .nav-badge { display: none; }
-  .view-tab { padding: 6px 13px; font-size: 0.78rem; }
+  /* Trim the tab pill + link a touch so the logo, centered tabs and link
+     all fit on one line (with slack) down to ~360px-wide phones. */
+  .view-tab { padding: 6px 11px; font-size: 0.75rem; }
+  .nav-link { font-size: 0.74rem; }
 
   /* Article view on mobile */
   .article-shell { width: calc(100vw - 20px); margin: 12px auto 40px; }
@@ -1679,6 +1734,11 @@ body.view-article .edit-sheet { display: none !important; }
   .controls-panel { padding: 14px 14px 16px; }
   .image-panel    { padding: 12px 14px 16px; }
   h1 { font-size: 1.32rem; }
+
+  /* Give the centered nav tabs a little more room from the side items. */
+  .nav-inner { gap: 6px; }
+  .view-tab { padding: 6px 9px; font-size: 0.72rem; }
+  .nav-link { font-size: 0.72rem; }
   .stock-grid { grid-template-columns: repeat(2, 1fr); }
 
   .download-wrap { gap: 6px; }
