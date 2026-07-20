@@ -110,6 +110,9 @@ const previewModeToggle = document.getElementById("preview-mode-toggle");
 const agentAuthGate = document.getElementById("agent-auth-gate");
 const agentAuthMessage = document.getElementById("agent-auth-message");
 const agentAuthRetry = document.getElementById("agent-auth-retry");
+const agentAccount = document.getElementById("agent-account");
+const agentAccountName = document.getElementById("agent-account-name");
+const agentLogout = document.getElementById("agent-logout");
 
 const editPanel = document.getElementById("edit-panel");
 const imagePanel = document.getElementById("image-panel");
@@ -401,6 +404,10 @@ if (agentAuthRetry) {
   });
 }
 
+if (agentLogout) {
+  agentLogout.addEventListener("click", logoutAgentUser);
+}
+
 async function initAgentAccess({ forceRefresh = false } = {}) {
   setAgentAuthState("checking", "Checking your Shortly Agents login...");
 
@@ -432,6 +439,7 @@ async function initAgentAccess({ forceRefresh = false } = {}) {
 
     state.agentUser = payload.user || null;
     const name = state.agentUser?.displayName || state.agentUser?.username;
+    syncAgentAccount();
     setAgentAuthState("ready", name ? `Signed in as ${name}.` : "Access ready.");
   } catch {
     setAgentAuthState("blocked", "Could not verify Shortly Agents access. Try again or open Shortly Agents.");
@@ -443,6 +451,28 @@ function setAgentAuthState(status, message) {
   document.body.classList.add(status === "ready" ? "auth-ready" : status === "blocked" ? "auth-blocked" : "auth-checking");
   if (agentAuthMessage) agentAuthMessage.textContent = message || "";
   if (agentAuthGate) agentAuthGate.hidden = status === "ready";
+  if (status !== "ready") {
+    state.agentUser = null;
+    syncAgentAccount();
+  }
+}
+
+function getAgentDisplayName() {
+  return state.agentUser?.displayName || state.agentUser?.username || "Shortly user";
+}
+
+function syncAgentAccount() {
+  const hasUser = Boolean(state.agentUser);
+  if (agentAccountName) agentAccountName.textContent = getAgentDisplayName();
+  if (agentAccount) agentAccount.hidden = !hasUser;
+  if (agentLogout) agentLogout.hidden = !hasUser;
+}
+
+function logoutAgentUser() {
+  sessionStorage.removeItem(AGENT_TOKEN_STORAGE_KEY);
+  state.agentUser = null;
+  syncAgentAccount();
+  window.location.assign(SHORTLY_AGENTS_URL);
 }
 
 function resetImageControls() {
