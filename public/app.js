@@ -203,7 +203,7 @@ const LAYOUT_PRESETS = {
 
 const state = {
   aspectRatio: "9:16",         // key into LAYOUT_PRESETS
-  accent: "#7900d9",
+  accent: "#379FFF",
   headline: "",
   detailText: "",
   sourceUrl: "",               // article URL from the last scrape (grounds the AI writer)
@@ -2589,10 +2589,10 @@ function drawNavBar() {
     const isAccent = i === 4;
 
     if (isAccent) {
-      // Purple circle
+      // Accent circle
       ctx.beginPath();
       ctx.arc(cx, cy, 40, 0, Math.PI * 2);
-      ctx.fillStyle = "#7900d9";
+      ctx.fillStyle = "#379FFF";
       ctx.fill();
     }
 
@@ -3122,9 +3122,11 @@ if (aiEnhanceBtn) {
       await ensureImageFocalPoint(enhanced);
       state.mainImage = enhanced;
       renderPoster();
-      const engineLabel = data.engine === "codeformer"
-        ? "CodeFormer (self-hosted, free)"
-        : (data.engine || "AI");
+      const ENGINE_LABELS = {
+        realesrgan: "Real-ESRGAN (self-hosted, free)",
+        codeformer: "CodeFormer (self-hosted, free)",
+      };
+      const engineLabel = ENGINE_LABELS[data.engine] || data.engine || "AI";
       setEnhanceStatus(`✓ Enhanced via ${engineLabel}. Re-pick a stock image to undo.`, "success");
     } catch (err) {
       setEnhanceStatus(`Enhance failed: ${err.message}`, "error");
