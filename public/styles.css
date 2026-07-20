@@ -322,7 +322,7 @@ button:focus-visible,
   min-width: 0;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 12px;
 }
 
 .nav-link {
@@ -337,13 +337,24 @@ button:focus-visible,
   color: var(--text-primary);
 }
 
+.nav-session {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 5px 4px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-input) 82%, transparent);
+}
+
 .nav-account {
   display: inline-flex;
   min-width: 0;
-  max-width: 190px;
+  max-width: 160px;
   flex-direction: column;
-  align-items: flex-end;
-  line-height: 1.05;
+  align-items: flex-start;
+  line-height: 1.1;
 }
 
 .nav-account-label {
@@ -358,7 +369,7 @@ button:focus-visible,
   max-width: 100%;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -368,11 +379,11 @@ button:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 32px;
-  padding: 0 12px;
+  height: 30px;
+  padding: 0 14px;
   border: 1px solid var(--hairline);
   border-radius: 999px;
-  background: var(--surface-input);
+  background: var(--surface);
   color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
@@ -390,6 +401,16 @@ button:focus-visible,
 .nav-account[hidden],
 .nav-logout[hidden] {
   display: none;
+}
+
+@media (max-width: 980px) {
+  .nav-badge {
+    display: none;
+  }
+
+  .nav-actions {
+    gap: 10px;
+  }
 }
 
 /* ─── Typography ─────────────────────────────────────────────── */
@@ -1485,12 +1506,17 @@ body.view-article .edit-sheet { display: none !important; }
   /* Trim the tab pill and keep the account controls compact on phones. */
   .view-tab { padding: 6px 11px; font-size: 0.75rem; }
   .nav-link { display: none; }
-  .nav-account { max-width: 98px; }
+  .nav-session {
+    max-width: 148px;
+    gap: 7px;
+    padding: 3px 4px 3px 9px;
+  }
+  .nav-account { max-width: 64px; }
   .nav-account-label { display: none; }
   .nav-account-name { font-size: 0.72rem; }
   .nav-logout {
-    height: 30px;
-    padding: 0 9px;
+    height: 28px;
+    padding: 0 10px;
     font-size: 0.72rem;
   }
 
@@ -1801,7 +1827,12 @@ body.view-article .edit-sheet { display: none !important; }
   .nav-inner { gap: 6px; }
   .view-tab { padding: 6px 9px; font-size: 0.72rem; }
   .nav-link { display: none; }
-  .nav-account { max-width: 86px; }
+  .nav-session {
+    max-width: 132px;
+    gap: 6px;
+    padding-left: 8px;
+  }
+  .nav-account { max-width: 52px; }
   .nav-logout {
     padding: 0 8px;
     font-size: 0.7rem;
