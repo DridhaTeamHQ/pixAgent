@@ -141,8 +141,6 @@ const faceDetector =
 const SHORTLY_AGENTS_URL = "https://shortlyagents.vercel.app/";
 const AGENT_TOKEN_STORAGE_KEY = "pixagent.shortlyToken";
 
-initAgentAccess();
-
 /* ── Aspect-ratio layout presets ──
    Each preset defines the canvas size + every key element's position so a
    single render path can produce posters in different aspect ratios.
@@ -240,6 +238,8 @@ const state = {
   filterBlur:       0,      // 0–20 px
   filterPreset:     "none", // identifier of the active preset chip, if any
 };
+
+initAgentAccess();
 
 // Build the ctx.filter string from current state values.
 function buildFilterString() {
