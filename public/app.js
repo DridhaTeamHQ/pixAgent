@@ -204,7 +204,7 @@ const LAYOUT_PRESETS = {
 
 const state = {
   aspectRatio: "9:16",         // key into LAYOUT_PRESETS
-  accent: "#379FFF",
+  accent: "#3979FF",
   headline: "",
   detailText: "",
   sourceUrl: "",               // article URL from the last scrape (grounds the AI writer)
@@ -2649,7 +2649,7 @@ function drawNavBar() {
       // Accent circle
       ctx.beginPath();
       ctx.arc(cx, cy, 40, 0, Math.PI * 2);
-      ctx.fillStyle = "#379FFF";
+      ctx.fillStyle = "#3979FF";
       ctx.fill();
     }
 
