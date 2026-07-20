@@ -2260,6 +2260,10 @@ function drawFixedLogos() {
 }
 
 function drawLogoAt(img, x, y, w, h, { glow = true } = {}) {
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const radius = Math.min(w, h) / 2;
+
   ctx.save();
   if (glow) {
     // Soft white halo to make the Pix logo pop against dark backgrounds.
@@ -2267,9 +2271,26 @@ function drawLogoAt(img, x, y, w, h, { glow = true } = {}) {
     ctx.shadowColor = "rgba(255, 255, 255, 0.5)";
     ctx.shadowBlur = 18;
   }
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+
   ctx.drawImage(img, x, y, w, h);
-  ctx.shadowBlur = 0;
   ctx.restore();
+
+  if (glow) {
+    ctx.save();
+    ctx.shadowColor = "rgba(255, 255, 255, 0.5)";
+    ctx.shadowBlur = 18;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawTag() {
