@@ -229,6 +229,7 @@ const state = {
   forceTextExport: false,
   imageSelectionNonce: 0,
   productImageAnalysis: null,
+  agentAuthenticated: false,
   agentUser: null,
 
   /* ── Image filters (CSS-style values applied via ctx.filter) ── */
@@ -437,10 +438,11 @@ async function initAgentAccess({ forceRefresh = false } = {}) {
       return;
     }
 
-    state.agentUser = payload.user || null;
-    const name = state.agentUser?.displayName || state.agentUser?.username;
+    state.agentAuthenticated = true;
+    state.agentUser = payload.user || getUserFromAgentToken(token) || null;
+    const name = getAgentDisplayName();
     syncAgentAccount();
-    setAgentAuthState("ready", name ? `Signed in as ${name}.` : "Access ready.");
+    setAgentAuthState("ready", `Signed in as ${name}.`);
   } catch {
     setAgentAuthState("blocked", "Could not verify Shortly Agents access. Try again or open Shortly Agents.");
   }
@@ -452,6 +454,7 @@ function setAgentAuthState(status, message) {
   if (agentAuthMessage) agentAuthMessage.textContent = message || "";
   if (agentAuthGate) agentAuthGate.hidden = status === "ready";
   if (status !== "ready") {
+    state.agentAuthenticated = false;
     state.agentUser = null;
     syncAgentAccount();
   }
@@ -462,14 +465,38 @@ function getAgentDisplayName() {
 }
 
 function syncAgentAccount() {
-  const hasUser = Boolean(state.agentUser);
+  const hasSession = Boolean(state.agentAuthenticated);
   if (agentAccountName) agentAccountName.textContent = getAgentDisplayName();
-  if (agentAccount) agentAccount.hidden = !hasUser;
-  if (agentLogout) agentLogout.hidden = !hasUser;
+  if (agentAccount) agentAccount.hidden = !hasSession;
+  if (agentLogout) agentLogout.hidden = !hasSession;
+}
+
+function getUserFromAgentToken(token) {
+  const payload = decodeAgentTokenPayload(token);
+  if (!payload) return null;
+  return {
+    loginId: payload.loginId || payload.id || null,
+    agentId: payload.agentId || "pix-post-agent",
+    username: payload.username || null,
+    displayName: payload.displayName || payload.name || payload.username || null,
+  };
+}
+
+function decodeAgentTokenPayload(token) {
+  const payloadPart = String(token || "").split(".")[0];
+  if (!payloadPart) return null;
+  try {
+    const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
 }
 
 function logoutAgentUser() {
   sessionStorage.removeItem(AGENT_TOKEN_STORAGE_KEY);
+  state.agentAuthenticated = false;
   state.agentUser = null;
   syncAgentAccount();
   window.location.assign(SHORTLY_AGENTS_URL);
