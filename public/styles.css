@@ -708,6 +708,11 @@ textarea {
   line-height: 1.55;
 }
 
+#write-detail,
+#detail-edit {
+  font-weight: 700;
+}
+
 input[type="url"]:focus,
 input[type="text"]:focus,
 textarea:focus {

@@ -61,10 +61,9 @@ async function renderExportBlob(cropOpts = null) {
 const X_EXPORT_SCALE = 2;
 
 // Text-preview paragraph font (the bullet copy drawn on the canvas in "Text"
-// mode). Poppins reads heavier + more characterful than Inter; 600 weight
-// fixes the "too thin" look. Measure + draw passes share these so wrapping
-// stays consistent.
-const PREVIEW_TEXT_WEIGHT = 600;
+// mode). Keep the paragraph copy firmly bold in both measure and draw passes
+// so the rendered text doesn't drift between lighter/heavier states.
+const PREVIEW_TEXT_WEIGHT = 700;
 const PREVIEW_TEXT_FONT = "'Poppins', 'Segoe UI', Arial, sans-serif";
 
 const IMAGE_PAN_LIMIT = 900;
