@@ -3402,11 +3402,11 @@ if (aiEnhanceBtn) {
    gets trimmed to a range chosen here, and is exported with the Pix branding
    burned in by ffmpeg.
 
-   The browser talks to the media service DIRECTLY rather than through
-   /api/*. Vercel caps serverless request bodies at 4.5 MB and a local video
-   is routinely far bigger, so a proxy hop is impossible. /api/media-token
-   hands back the service URL plus a short-lived HMAC token; MEDIA_SECRET
-   itself never reaches the client.
+   Both endpoints are ordinary same-origin routes on this server, which
+   shells out to yt-dlp and ffmpeg. An earlier version POSTed to a separate
+   host with an HMAC token because Vercel caps serverless request bodies at
+   4.5 MB, far below a video upload — Railway has no such cap, so the second
+   service, the shared secret and the CORS config are all gone.
    ══════════════════════════════════════════════════════════════ */
 
 const MAX_CLIP_SECONDS = 90;          // matches MAX_CLIP_SECONDS on the service
@@ -3443,27 +3443,10 @@ function formatTimecode(seconds) {
   return `${m}:${rest.toFixed(1).padStart(4, "0")}`;
 }
 
-/* ── Media service handshake ──
-   Tokens are minted per operation rather than cached: they expire, and a
-   fetch is far cheaper than reasoning about staleness mid-upload. */
-async function getMediaEndpoint() {
-  const res = await fetch("/api/media-token", { method: "POST" });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    // 503 means MEDIA_URL is unset. Locally that is nearly always a stale
-    // process: the server reads .env once at startup, so adding MEDIA_URL
-    // to .env does nothing until it restarts. Say so — the bare
-    // "not configured" message sends people hunting in the wrong place.
-    if (res.status === 503 && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
-      throw new Error(
-        "MEDIA_URL is not set. If you just added it to .env, restart the dev server — " +
-        ".env is read once at startup."
-      );
-    }
-    throw new Error(data.error || "Video is not configured on this deployment.");
-  }
-  return res.json();   // { mediaUrl, token }
-}
+/* The video endpoints are ordinary same-origin routes on this server — the
+   backend shells out to yt-dlp and ffmpeg. There is no second host, no
+   shared secret and no token exchange: that only existed to work around
+   Vercel's 4.5 MB serverless body cap, which Railway doesn't have. */
 
 // Swap the export button into a visible working state. The encode reports no
 // percentage, so this is an indeterminate "still going" signal, not progress.
@@ -3476,16 +3459,12 @@ function setExportWorking(working) {
   if (bar) bar.hidden = !working;
 }
 
-function mediaHeaders(token, extra = {}) {
-  return token ? { "X-Media-Token": token, ...extra } : { ...extra };
-}
-
 async function mediaErrorMessage(res) {
   const data = await res.json().catch(() => null);
-  if (data && data.detail) return data.detail;
-  if (res.status === 401) return "The media service rejected this request. Check MEDIA_SECRET.";
+  if (data && data.error) return data.error;
   if (res.status === 413) return "That file is too large.";
-  return `Media service error ${res.status}.`;
+  if (res.status === 504) return "The server timed out. Try a shorter clip.";
+  return `Server error ${res.status}.`;
 }
 
 /* ── Source: pasted link ── */
@@ -3493,10 +3472,9 @@ async function fetchVideoFromUrl(url) {
   setVideoStatus("Fetching video details…");
   if (videoFetchBtn) videoFetchBtn.disabled = true;
   try {
-    const { mediaUrl, token } = await getMediaEndpoint();
-    const res = await fetch(`${mediaUrl}/resolve`, {
+    const res = await fetch("/api/video/resolve", {
       method: "POST",
-      headers: mediaHeaders(token, { "Content-Type": "application/json" }),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
     });
     if (!res.ok) throw new Error(await mediaErrorMessage(res));
@@ -3730,7 +3708,6 @@ async function exportVideoClip() {
   try {
     const { width, height } = videoTargetSize();
     const overlay = await renderVideoOverlayPng(width, height);
-    const { mediaUrl, token } = await getMediaEndpoint();
 
     const form = new FormData();
     form.append("start", String(state.trimStart));
@@ -3748,13 +3725,10 @@ async function exportVideoClip() {
     }
 
     // No AbortController timeout: a long download plus encode legitimately
-    // runs for minutes, and aborting here would kill work the service is
+    // runs for minutes, and aborting here would kill work the server is
     // still doing without telling it to stop.
-    const res = await fetch(`${mediaUrl}/clip`, {
-      method: "POST",
-      headers: mediaHeaders(token),   // no Content-Type — the browser sets the multipart boundary
-      body: form,
-    });
+    // No Content-Type header — the browser sets the multipart boundary.
+    const res = await fetch("/api/video/clip", { method: "POST", body: form });
     if (!res.ok) throw new Error(await mediaErrorMessage(res));
 
     const blob = await res.blob();
@@ -3771,10 +3745,10 @@ async function exportVideoClip() {
 
     setVideoStatus(`Exported ${(blob.size / 1048576).toFixed(1)} MB · ${width}×${height}`, "success");
   } catch (err) {
-    // A cross-origin failure surfaces as a bare "Failed to fetch", which tells
+    // A dropped connection surfaces as a bare "Failed to fetch", which tells
     // the user nothing — name the likely cause.
     const msg = /failed to fetch|networkerror|load failed/i.test(err.message || "")
-      ? "Could not reach the media service. Is it running, and does ALLOWED_ORIGINS include this site?"
+      ? "Lost connection to the server during export. The clip may be too large — try a shorter range."
       : (err.message || "Export failed.");
     setVideoStatus(msg, "error");
   } finally {

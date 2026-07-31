@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "axios": "^1.13.6",
+    "busboy": "^1.6.0",
     "cheerio": "^1.2.0",
     "dotenv": "^17.4.2",
     "twitter-api-v2": "^1.29.0"

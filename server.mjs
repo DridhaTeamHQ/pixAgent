@@ -1,8 +1,14 @@
 import http from "node:http";
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import {
+  createReadStream, createWriteStream, existsSync, mkdirSync,
+  readFileSync, rmSync, statSync, writeFileSync,
+} from "node:fs";
 import { extname, join, normalize } from "node:path";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { tmpdir } from "node:os";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { spawn } from "node:child_process";
 import { TwitterApi } from "twitter-api-v2";
+import Busboy from "busboy";
 
 const root = join(process.cwd(), "public");
 const port = Number(process.env.PORT || 3000);
@@ -108,8 +114,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if ((req.method === "POST" || req.method === "GET") && req.url === "/api/media-token") {
-    await handleMediaToken(req, res);
+  if (req.method === "POST" && req.url === "/api/video/resolve") {
+    await handleVideoResolve(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/video/clip") {
+    await handleVideoClip(req, res);
     return;
   }
 
@@ -161,7 +172,11 @@ const server = http.createServer(async (req, res) => {
       features: {
         openai: Boolean(process.env.OPENAI_API_KEY || secrets.OPENAI_API_KEY),
         upscaler: Boolean(process.env.UPSCALER_URL || secrets.UPSCALER_URL),
-        media: Boolean(process.env.MEDIA_URL || secrets.MEDIA_URL),
+        // Video works when both binaries are on PATH; cookies are what make
+        // YouTube reliable from a datacenter IP.
+        ffmpeg: Boolean(ffmpegAvailable),
+        ytdlp: Boolean(ytdlpAvailable),
+        ytdlpCookies: Boolean(cookieFilePath),
         pexels: Boolean(pexelsApiKey),
       },
     });
@@ -319,28 +334,317 @@ async function handleGoogleImages(req, res) {
   }
 }
 
-// Mirror of api/media-token.js — see that file for why the browser talks to
-// the media service directly instead of proxying through here.
-const MEDIA_TOKEN_TTL_SECONDS = 15 * 60;
 
-async function handleMediaToken(req, res) {
+/* ═══════════════════════ Slide 2 video (yt-dlp + ffmpeg) ═══════════════════════
+
+   Runs in-process rather than as a separate service. The split used to exist
+   because Vercel caps serverless request bodies at 4.5 MB, so a 20-200 MB
+   video upload could never transit a function — the browser had to POST
+   straight to a second host, which needed a shared secret, HMAC tokens and
+   CORS. On Railway that cap doesn't exist, so all of that is gone: these are
+   ordinary same-origin routes.
+
+   Branding is NOT drawn here. The browser renders the exact overlay it shows
+   in the live preview to a transparent PNG and uploads it alongside the clip;
+   ffmpeg only composites. That keeps fonts and layout identical to what the
+   user approved on screen, and means design changes never touch this file.
+
+   Env:
+     YTDLP_COOKIES     base64 Netscape cookies.txt — required for YouTube from
+                       a datacenter IP, and for most of Instagram
+     MAX_CLIP_SECONDS  output length cap (default 90)
+     MAX_UPLOAD_BYTES  local upload cap (default 300 MB)
+*/
+
+const MAX_CLIP_SECONDS = Number(process.env.MAX_CLIP_SECONDS || 90);
+const MAX_VIDEO_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 300 * 1024 * 1024);
+const RESOLVE_TIMEOUT_MS = 60_000;
+const CLIP_TIMEOUT_MS = 600_000;
+
+// Railway's variable UI is single-line, so the cookies file is passed base64.
+// Written once at startup; yt-dlp reads it from disk.
+const COOKIE_FILE = join(tmpdir(), "pix-ytdlp-cookies.txt");
+const cookieFilePath = (() => {
+  const raw = (process.env.YTDLP_COOKIES || secrets.YTDLP_COOKIES || "").trim();
+  if (!raw) return "";
   try {
-    const base = (process.env.MEDIA_URL || secrets.MEDIA_URL || "").replace(/\/+$/, "");
-    if (!base) {
-      sendJson(res, 503, { error: "Video is not configured on this deployment (MEDIA_URL unset)." });
+    // Accept either base64 or the file pasted verbatim.
+    const looksBase64 = /^[A-Za-z0-9+/=\s]+$/.test(raw) && !raw.includes("\t");
+    const data = looksBase64 ? Buffer.from(raw, "base64") : Buffer.from(raw, "utf-8");
+    if (data.length < 20) return "";
+    writeFileSync(COOKIE_FILE, data);
+    return COOKIE_FILE;
+  } catch {
+    return "";
+  }
+})();
+
+if (cookieFilePath) {
+  console.log("✓ yt-dlp cookies loaded");
+} else {
+  console.warn("⚠ No YTDLP_COOKIES — YouTube may bot-check this server and Instagram will mostly fail.");
+}
+
+// Probe the two binaries once at startup so /health can report a misbuilt
+// image directly, instead of every export failing with a confusing ENOENT.
+let ffmpegAvailable = false;
+let ytdlpAvailable = false;
+(async () => {
+  const [ff, yt] = await Promise.all([
+    run("ffmpeg", ["-version"], 10_000),
+    run("yt-dlp", ["--version"], 10_000),
+  ]);
+  ffmpegAvailable = ff.code === 0;
+  ytdlpAvailable = yt.code === 0;
+  if (ffmpegAvailable && ytdlpAvailable) {
+    console.log(`✓ Video ready (yt-dlp ${yt.stdout.toString().trim()})`);
+  } else {
+    if (!ffmpegAvailable) console.warn("⚠ ffmpeg not found — video export will fail.");
+    if (!ytdlpAvailable) console.warn("⚠ yt-dlp not found — link fetching will fail.");
+  }
+})();
+
+function ytdlpArgs(extra) {
+  const base = ["--no-playlist", "--no-warnings"];
+  if (cookieFilePath) base.push("--cookies", cookieFilePath);
+  return base.concat(extra);
+}
+
+// Spawn a binary, capture stdout/stderr, enforce a wall-clock timeout.
+function run(bin, args, timeoutMs) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(bin, args, { windowsHide: true });
+    } catch (err) {
+      resolve({ code: -1, stdout: Buffer.alloc(0), stderr: Buffer.from(String(err.message)) });
       return;
     }
-    const secret = process.env.MEDIA_SECRET || secrets.MEDIA_SECRET || "";
-    let token = "";
-    if (secret) {
-      const expiry = String(Math.floor(Date.now() / 1000) + MEDIA_TOKEN_TTL_SECONDS);
-      const sig = createHmac("sha256", secret).update(expiry).digest("hex");
-      token = `${expiry}.${sig}`;
-    }
-    sendJson(res, 200, { mediaUrl: base, token, expiresIn: MEDIA_TOKEN_TTL_SECONDS });
-  } catch (error) {
-    sendJson(res, 500, { error: error.message || "Could not mint a media token." });
+    const out = [];
+    const err = [];
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, timeoutMs);
+
+    child.stdout.on("data", (d) => out.push(d));
+    child.stderr.on("data", (d) => err.push(d));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ code: -1, stdout: Buffer.concat(out), stderr: Buffer.from(String(e.message)) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, timedOut, stdout: Buffer.concat(out), stderr: Buffer.concat(err) });
+    });
+  });
+}
+
+// yt-dlp's stderr is a wall of text; turn the known failures into something
+// the user can actually act on.
+function friendlyYtdlpError(stderr) {
+  const text = String(stderr || "");
+  const low = text.toLowerCase();
+  if (low.includes("sign in to confirm") || low.includes("not a bot")) {
+    return "YouTube blocked this request as automated. Set YTDLP_COOKIES with cookies from a logged-in account.";
   }
+  if (low.includes("login required") || low.includes("requested content is not available")) {
+    return "This content requires a login. Set YTDLP_COOKIES with cookies from an account that can view it.";
+  }
+  if (low.includes("private video")) return "That video is private.";
+  if (low.includes("video unavailable") || low.includes("removed")) return "That video is unavailable or has been removed.";
+  if (low.includes("unsupported url")) return "That link isn't a supported video URL.";
+  if (low.includes("rate-limit") || low.includes("429")) return "The source is rate-limiting this server. Try again in a few minutes.";
+  if (low.includes("enoent")) return "yt-dlp is not installed on this server.";
+  const lines = text.trim().split("\n").filter(Boolean);
+  return (lines[lines.length - 1] || "Download failed.").slice(0, 300);
+}
+
+async function handleVideoResolve(req, res) {
+  try {
+    const body = await readJson(req);
+    const url = String(body.url || "").trim();
+    if (!/^https?:\/\//i.test(url)) {
+      sendJson(res, 400, { error: "A http(s) URL is required." });
+      return;
+    }
+
+    const r = await run("yt-dlp", ytdlpArgs(["--dump-single-json", "--skip-download", url]), RESOLVE_TIMEOUT_MS);
+    if (r.timedOut) { sendJson(res, 504, { error: "Resolving the video timed out." }); return; }
+    if (r.code !== 0) { sendJson(res, 502, { error: friendlyYtdlpError(r.stderr || r.stdout) }); return; }
+
+    let info;
+    try {
+      info = JSON.parse(r.stdout.toString("utf-8"));
+    } catch {
+      sendJson(res, 502, { error: "Could not parse video metadata." });
+      return;
+    }
+
+    sendJson(res, 200, {
+      title: info.title || "",
+      duration: info.duration || 0,
+      thumbnail: info.thumbnail || "",
+      uploader: info.uploader || info.channel || "",
+      extractor: info.extractor_key || "",
+      width: info.width || 0,
+      height: info.height || 0,
+      webpage_url: info.webpage_url || url,
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Resolve failed." });
+  }
+}
+
+// Stream a multipart body to disk. Buffering a 300 MB upload in memory would
+// put the whole container at risk, so files go straight to /tmp and only the
+// small text fields are kept in memory.
+function receiveClipUpload(req, dir) {
+  return new Promise((resolve, reject) => {
+    const fields = {};
+    const files = {};
+    const pending = [];
+    let aborted = null;
+
+    let bb;
+    try {
+      bb = Busboy({ headers: req.headers, limits: { files: 2, fileSize: MAX_VIDEO_UPLOAD_BYTES } });
+    } catch (err) {
+      reject(new Error("Malformed upload: " + err.message));
+      return;
+    }
+
+    bb.on("field", (name, value) => { fields[name] = value; });
+
+    bb.on("file", (name, stream, info) => {
+      if (name !== "video" && name !== "overlay") { stream.resume(); return; }
+      const dest = join(dir, name === "video" ? "source.bin" : "overlay.png");
+      files[name] = { path: dest, name: info.filename || "", bytes: 0 };
+      const ws = createWriteStream(dest);
+      const done = new Promise((res2, rej2) => {
+        stream.on("data", (d) => { files[name].bytes += d.length; });
+        stream.on("limit", () => { aborted = `${name} exceeds the ${Math.round(MAX_VIDEO_UPLOAD_BYTES / 1048576)} MB limit`; });
+        ws.on("finish", res2);
+        ws.on("error", rej2);
+      });
+      pending.push(done);
+      stream.pipe(ws);
+    });
+
+    bb.on("error", reject);
+    bb.on("close", async () => {
+      try {
+        await Promise.all(pending);
+        if (aborted) { reject(new Error(aborted)); return; }
+        resolve({ fields, files });
+      } catch (err) { reject(err); }
+    });
+
+    req.pipe(bb);
+  });
+}
+
+async function handleVideoClip(req, res) {
+  const job = randomUUID().replace(/-/g, "");
+  const dir = join(tmpdir(), `pix-clip-${job}`);
+  mkdirSync(dir, { recursive: true });
+  const outPath = join(dir, "out.mp4");
+
+  try {
+    const { fields, files } = await receiveClipUpload(req, dir);
+
+    const start = Number(fields.start || 0);
+    const end = Number(fields.end || 0);
+    const width = Math.trunc(Number(fields.width || 1080));
+    const height = Math.trunc(Number(fields.height || 1920));
+    const mute = String(fields.mute || "") === "true";
+    const url = String(fields.url || "").trim();
+
+    const duration = Math.round((end - start) * 1000) / 1000;
+    if (!Number.isFinite(duration) || duration <= 0) {
+      sendJson(res, 400, { error: "End must be after start." });
+      return;
+    }
+    if (duration > MAX_CLIP_SECONDS) {
+      sendJson(res, 400, { error: `Clip is ${duration.toFixed(0)}s; the limit is ${MAX_CLIP_SECONDS}s.` });
+      return;
+    }
+    if (!(width > 0 && height > 0) || width % 2 || height % 2) {
+      sendJson(res, 400, { error: "Width and height must be positive even numbers." });
+      return;
+    }
+    if (!url && !files.video) {
+      sendJson(res, 400, { error: "Supply either a url or a video file." });
+      return;
+    }
+
+    // Source: local upload, or fetch with yt-dlp.
+    let srcPath;
+    if (files.video) {
+      if (files.video.bytes < 1000) { sendJson(res, 400, { error: "Empty or invalid video file." }); return; }
+      srcPath = files.video.path;
+    } else {
+      srcPath = join(dir, "source.mp4");
+      const dl = await run("yt-dlp", ytdlpArgs([
+        "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+        "--merge-output-format", "mp4",
+        "-o", srcPath,
+        url,
+      ]), CLIP_TIMEOUT_MS);
+      if (dl.timedOut) { sendJson(res, 504, { error: "Downloading the video timed out." }); return; }
+      if (dl.code !== 0 || !existsSync(srcPath)) {
+        sendJson(res, 502, { error: friendlyYtdlpError(dl.stderr || dl.stdout) });
+        return;
+      }
+    }
+
+    // Scale-to-cover + centre-crop to the target frame, then composite the
+    // overlay. `-ss` before `-i` seeks fast; accuracy still holds because we
+    // re-encode. `0:a?` makes audio optional so silent sources don't fail.
+    const cover = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1`;
+    const args = ["-hide_banner", "-loglevel", "error", "-y", "-ss", String(start), "-i", srcPath];
+    let filter;
+    if (files.overlay && files.overlay.bytes > 0) {
+      args.push("-i", files.overlay.path);
+      filter = `[0:v]${cover}[bg];[1:v]scale=${width}:${height}[ov];[bg][ov]overlay=0:0[v]`;
+    } else {
+      filter = `[0:v]${cover}[v]`;
+    }
+    args.push("-t", String(duration), "-filter_complex", filter, "-map", "[v]");
+    if (mute) args.push("-an");
+    else args.push("-map", "0:a?", "-c:a", "aac", "-b:a", "128k");
+    args.push(
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-crf", "20",
+      "-pix_fmt", "yuv420p",      // required for Safari / iOS playback
+      "-movflags", "+faststart",  // metadata up front so it streams
+      outPath,
+    );
+
+    const enc = await run("ffmpeg", args, CLIP_TIMEOUT_MS);
+    if (enc.timedOut) { sendJson(res, 504, { error: "Encoding timed out." }); return; }
+    if (enc.code !== 0) {
+      const tail = enc.stderr.toString("utf-8").slice(-300);
+      const msg = /enoent/i.test(tail) ? "ffmpeg is not installed on this server." : `Encoding failed: ${tail}`;
+      sendJson(res, 500, { error: msg });
+      return;
+    }
+
+    const stat = statSync(outPath);
+    if (stat.size < 1000) { sendJson(res, 500, { error: "The encoder produced an empty file." }); return; }
+
+    res.writeHead(200, {
+      "Content-Type": "video/mp4",
+      "Content-Length": stat.size,
+      "X-Clip-Duration": String(duration),
+      "Content-Disposition": 'attachment; filename="clip.mp4"',
+    });
+    createReadStream(outPath).pipe(res);
+    res.on("close", () => rmSync(dir, { recursive: true, force: true }));
+    return;   // cleanup happens on stream close, not in finally
+  } catch (error) {
+    if (!res.headersSent) sendJson(res, 500, { error: error.message || "Clip failed." });
+  }
+  rmSync(dir, { recursive: true, force: true });
 }
 
 async function handleAgentSession(req, res) {
