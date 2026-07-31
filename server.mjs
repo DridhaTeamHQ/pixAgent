@@ -41,7 +41,35 @@ function readSecrets() {
 }
 
 const secrets = readSecrets();
-const pexelsApiKey = process.env.PEXELS_API_KEY || secrets.pexelsApiKey || secrets.PEXELS_API_KEY || "";
+
+/**
+ * Read a secret from the environment, defensively.
+ *
+ * Pasting into a hosting dashboard very easily carries a trailing newline, a
+ * stray space, or the surrounding quotes from a .env line. Any of those goes
+ * straight into an Authorization header and the provider answers 401 — which
+ * reads as "my key is wrong" when the key is fine. Strip them here so a
+ * cosmetic paste error can't masquerade as a bad credential.
+ */
+function env(name, ...aliases) {
+  for (const key of [name, ...aliases]) {
+    const raw = process.env[key] ?? secrets[key];
+    if (raw == null) continue;
+    const cleaned = String(raw).trim().replace(/^(['"])([\s\S]*)\1$/, "$2").trim();
+    if (cleaned) return cleaned;
+  }
+  return "";
+}
+
+// Warn loudly if a value needed cleaning — otherwise this silently papers
+// over a misconfiguration the user should fix at the source.
+for (const name of ["OPENAI_API_KEY", "UPSCALER_SECRET", "SHORTLY_AGENT_AUTH_SECRET", "PEXELS_API_KEY", "FAL_KEY"]) {
+  const raw = process.env[name] ?? secrets[name];
+  if (raw != null && String(raw) !== env(name)) {
+    console.warn(`⚠ ${name} had surrounding whitespace or quotes — trimmed. Fix it in the dashboard.`);
+  }
+}
+const pexelsApiKey = env("PEXELS_API_KEY", "pexelsApiKey");
 if (pexelsApiKey) {
   console.log(`✓ Pexels API key loaded (${pexelsApiKey.slice(0, 6)}…)`);
 } else {
@@ -51,10 +79,10 @@ if (pexelsApiKey) {
 
 /* ── Twitter / X (OAuth 1.0a) ── */
 const twitterCfg = {
-  appKey:       process.env.TWITTER_API_KEY       || secrets.TWITTER_API_KEY,
-  appSecret:    process.env.TWITTER_API_SECRET    || secrets.TWITTER_API_SECRET,
-  accessToken:  process.env.TWITTER_ACCESS_TOKEN  || secrets.TWITTER_ACCESS_TOKEN,
-  accessSecret: process.env.TWITTER_ACCESS_SECRET || secrets.TWITTER_ACCESS_SECRET,
+  appKey:       env("TWITTER_API_KEY"),
+  appSecret:    env("TWITTER_API_SECRET"),
+  accessToken:  env("TWITTER_ACCESS_TOKEN"),
+  accessSecret: env("TWITTER_ACCESS_SECRET"),
 };
 const twitterClient = (twitterCfg.appKey && twitterCfg.accessToken)
   ? new TwitterApi(twitterCfg)
@@ -66,11 +94,18 @@ if (twitterClient) {
 }
 
 /* ── OpenAI (for AI tweet captions) ── */
-const openaiApiKey = process.env.OPENAI_API_KEY || secrets.OPENAI_API_KEY || "";
+const openaiApiKey = env("OPENAI_API_KEY");
 if (openaiApiKey) {
-  console.log(`✓ OpenAI API key loaded (${openaiApiKey.slice(0, 8)}…)`);
+  // Log a fingerprint, never the key. Prefix + length + last 4 is enough to
+  // tell "the wrong key is deployed" apart from "the key is revoked" without
+  // putting a live credential in the logs.
+  const shape = `${openaiApiKey.slice(0, 8)}…${openaiApiKey.slice(-4)} len=${openaiApiKey.length}`;
+  console.log(`✓ OpenAI API key loaded (${shape})`);
+  if (!/^sk-[A-Za-z0-9_-]+$/.test(openaiApiKey)) {
+    console.warn("⚠ OPENAI_API_KEY doesn't look like an OpenAI key (expected sk-… with no spaces).");
+  }
 } else {
-  console.warn("⚠ OPENAI_API_KEY missing — /api/generate-caption will return 503.");
+  console.warn("⚠ OPENAI_API_KEY missing — AI features will return 503.");
 }
 
 const STOPWORDS = new Set([
@@ -170,8 +205,8 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       uptime: Math.round(process.uptime()),
       features: {
-        openai: Boolean(process.env.OPENAI_API_KEY || secrets.OPENAI_API_KEY),
-        upscaler: Boolean(process.env.UPSCALER_URL || secrets.UPSCALER_URL),
+        openai: Boolean(env("OPENAI_API_KEY")),
+        upscaler: Boolean(env("UPSCALER_URL")),
         // Video works when both binaries are on PATH; cookies are what make
         // YouTube reliable from a datacenter IP.
         ffmpeg: Boolean(ffmpegAvailable),
@@ -365,7 +400,7 @@ const CLIP_TIMEOUT_MS = 600_000;
 // Written once at startup; yt-dlp reads it from disk.
 const COOKIE_FILE = join(tmpdir(), "pix-ytdlp-cookies.txt");
 const cookieFilePath = (() => {
-  const raw = (process.env.YTDLP_COOKIES || secrets.YTDLP_COOKIES || "").trim();
+  const raw = (env("YTDLP_COOKIES")).trim();
   if (!raw) return "";
   try {
     // Accept either base64 or the file pasted verbatim.
@@ -649,7 +684,7 @@ async function handleVideoClip(req, res) {
 
 async function handleAgentSession(req, res) {
   try {
-    const secret = process.env.SHORTLY_AGENT_AUTH_SECRET || secrets.SHORTLY_AGENT_AUTH_SECRET || "";
+    const secret = env("SHORTLY_AGENT_AUTH_SECRET");
     if (!secret) {
       sendJson(res, 200, {
         required: false,
@@ -733,7 +768,7 @@ function safeEqual(a, b) {
 
 async function handleFluxImage(req, res) {
   try {
-    const falKey = process.env.FAL_KEY || secrets.FAL_KEY || secrets.falKey || "";
+    const falKey = env("FAL_KEY", "falKey");
     if (!falKey) {
       sendJson(res, 503, { error: "FAL_KEY is missing." });
       return;
@@ -776,7 +811,7 @@ async function handleFluxImage(req, res) {
 
 async function handleAnalyzeImage(req, res) {
   try {
-    const apiKey = process.env.OPENAI_API_KEY || secrets.OPENAI_API_KEY || "";
+    const apiKey = env("OPENAI_API_KEY");
     if (!apiKey) {
       sendJson(res, 503, { error: "OPENAI_API_KEY is missing." });
       return;
@@ -1549,6 +1584,45 @@ function readJson(req, options = {}) {
   });
 }
 
+/**
+ * Turn an OpenAI error body into something the user can act on.
+ *
+ * "OpenAI 401" on its own is useless — it doesn't distinguish a revoked key
+ * from a malformed header from a key belonging to the wrong project. OpenAI
+ * says which in the response body; surface it.
+ */
+function openaiErrorMessage(status, body) {
+  let detail = "";
+  try {
+    detail = JSON.parse(body)?.error?.message || "";
+  } catch {
+    detail = String(body || "").slice(0, 200);
+  }
+  const low = detail.toLowerCase();
+
+  if (status === 401) {
+    if (low.includes("incorrect api key")) {
+      return "OpenAI rejected this key as invalid. It was most likely revoked or regenerated — " +
+             "create a fresh one at platform.openai.com/api-keys and update OPENAI_API_KEY.";
+    }
+    if (low.includes("no api key") || low.includes("provide an api key")) {
+      return "OpenAI received no key. OPENAI_API_KEY is set but empty or malformed — " +
+             "check for quotes or line breaks in the value.";
+    }
+    return `OpenAI rejected the key (401). ${detail}`.trim();
+  }
+  if (status === 429) {
+    return low.includes("quota")
+      ? "OpenAI quota exhausted — add credit at platform.openai.com/settings/organization/billing."
+      : "OpenAI is rate-limiting this key. Wait a moment and retry.";
+  }
+  if (status === 403) {
+    return `OpenAI denied access (403). The key may lack permission for this model. ${detail}`.trim();
+  }
+  if (status >= 500) return "OpenAI is having problems (5xx). Try again shortly.";
+  return `OpenAI ${status}. ${detail}`.trim();
+}
+
 function sendJson(res, status, payload) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(payload));
@@ -1837,7 +1911,7 @@ async function handleGenerateCaption(req, res) {
       const errText = await aiRes.text().catch(() => "");
       console.error(`✗ OpenAI ${aiRes.status}:`, errText.slice(0, 300));
       res.writeHead(502, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: `OpenAI ${aiRes.status}`, detail: errText.slice(0, 200) }));
+      res.end(JSON.stringify({ error: openaiErrorMessage(aiRes.status, errText) }));
       return;
     }
 
@@ -2062,7 +2136,7 @@ async function handleGenerateArticle(req, res) {
     if (!aiRes.ok) {
       const errText = await aiRes.text().catch(() => "");
       console.error(`✗ OpenAI ${aiRes.status}:`, errText.slice(0, 300));
-      sendJson(res, 502, { error: `OpenAI ${aiRes.status}`, detail: errText.slice(0, 200) });
+      sendJson(res, 502, { error: openaiErrorMessage(aiRes.status, errText) });
       return;
     }
 
@@ -2190,7 +2264,7 @@ async function describeImageForEnhance(buffer, mime) {
 // if the service isn't configured / errors / times out — caller then falls
 // back to gpt-image-1.5.
 async function tryRailwayUpscale(buffer, mime) {
-  const base = (process.env.UPSCALER_URL || secrets.UPSCALER_URL || "").replace(/\/+$/, "");
+  const base = (env("UPSCALER_URL")).replace(/\/+$/, "");
   if (!base) return null;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 285000);
@@ -2199,7 +2273,7 @@ async function tryRailwayUpscale(buffer, mime) {
       method: "POST",
       headers: {
         "Content-Type": mime,
-        "X-Secret": process.env.UPSCALER_SECRET || secrets.UPSCALER_SECRET || "",
+        "X-Secret": env("UPSCALER_SECRET"),
       },
       body: buffer,
       signal: ctrl.signal,
