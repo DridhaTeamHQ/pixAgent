@@ -32,7 +32,8 @@ Set on the **app** service:
 |---|---|---|
 | `OPENAI_API_KEY` | **yes** | article writer, tweet captions, vision |
 | `SHORTLY_AGENT_AUTH_SECRET` | **yes** | Shortly Agents access gate. Unset = no gate, app open to anyone |
-| `YTDLP_COOKIES` | for video | base64 `cookies.txt`. Without it YouTube bot-checks this server and Instagram mostly fails |
+| `YTDLP_COOKIES` | for YouTube | base64 `cookies.txt` from a **throwaway** account. Free, but expires in weeks–months |
+| `YTDLP_PROXY` | for YouTube | residential proxy URL, e.g. `http://user:pass@host:port`. Costs money, but never expires and risks no account |
 | `UPSCALER_URL` | for AI Enhance | upscaler domain, no trailing slash. Unset = falls back to paid gpt-image |
 | `UPSCALER_SECRET` | for AI Enhance | must match the upscaler service |
 | `PEXELS_API_KEY` | optional | stock images. Unset = that source is skipped |
@@ -47,6 +48,28 @@ see [upscaler/README.md](upscaler/README.md)).
 
 **Do not set `PORT`.** Railway injects it; hard-coding it makes the container
 unreachable behind their proxy.
+
+## Why YouTube needs cookies or a proxy
+
+YouTube judges requests by IP reputation, and every cloud host — Railway
+included — sits in a flagged datacenter range. Measured against the live
+deployment: even with a JS runtime and all five player clients tried, an
+anonymous fetch is refused with "Sign in to confirm you're not a bot".
+
+Two fixes, and they solve it differently:
+
+| | `YTDLP_COOKIES` | `YTDLP_PROXY` |
+|---|---|---|
+| How | proves an account is behind the request | removes the reason for the challenge |
+| Cost | free | ~$1–15/GB |
+| Expires | weeks to months | never |
+| Risk | the account can be banned | none |
+
+Cookies are the quick fix. A residential proxy (IPRoyal, Bright Data, etc.)
+is the right answer for anything public — nothing to re-export on a
+schedule, and no Google account exposed. Set both and both are applied.
+
+**Uploading a file needs neither** and never breaks.
 
 ## Cookies for YouTube / Instagram
 

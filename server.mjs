@@ -213,6 +213,7 @@ const server = http.createServer(async (req, res) => {
         ytdlp: Boolean(ytdlpAvailable),
         ytdlpCookies: Boolean(cookieFilePath),
         jsRuntime: Boolean(jsRuntimeAvailable),
+        ytdlpProxy: Boolean(ytdlpProxy),
         pexels: Boolean(pexelsApiKey),
       },
     });
@@ -477,8 +478,24 @@ let jsRuntimeAvailable = false;
    runtime is missing from the image. */
 const YOUTUBE_CLIENT_LADDER = ["", "android_vr", "tv_embedded", "web_safari", "mweb"];
 
+/* A proxy is the only thing that actually fixes the root cause. YouTube
+   blocks by IP reputation, and every cloud host — Railway included — sits in
+   a flagged datacenter range. Cookies work around it by proving there's an
+   account behind the request; a residential proxy removes the reason for the
+   challenge in the first place, with nothing to expire and no account to
+   ban. Accepts any yt-dlp proxy URL:
+     http://user:pass@host:port   socks5://user:pass@host:port          */
+const ytdlpProxy = env("YTDLP_PROXY");
+if (ytdlpProxy) {
+  // Never log the proxy URL itself — it usually carries credentials.
+  let host = "configured";
+  try { host = new URL(ytdlpProxy).host.replace(/^.*@/, ""); } catch { /* keep generic */ }
+  console.log(`✓ yt-dlp proxy enabled (${host})`);
+}
+
 function ytdlpArgs(extra, client = "") {
   const base = ["--no-playlist", "--no-warnings"];
+  if (ytdlpProxy) base.push("--proxy", ytdlpProxy);
   if (cookieFilePath) base.push("--cookies", cookieFilePath);
   if (client) base.push("--extractor-args", `youtube:player_client=${client}`);
   return base.concat(extra);
@@ -556,7 +573,9 @@ function friendlyYtdlpError(stderr) {
   const text = String(stderr || "");
   const low = text.toLowerCase();
   if (low.includes("sign in to confirm") || low.includes("not a bot")) {
-    return "YouTube blocked this request as automated. Set YTDLP_COOKIES with cookies from a logged-in account.";
+    return "YouTube blocked this server as automated — cloud IPs are flagged by default. " +
+           "Fix it with YTDLP_COOKIES (cookies from a throwaway logged-in account) or " +
+           "YTDLP_PROXY (a residential proxy). Uploading a file works either way.";
   }
   if (low.includes("login required") || low.includes("requested content is not available")) {
     return "This content requires a login. Set YTDLP_COOKIES with cookies from an account that can view it.";
