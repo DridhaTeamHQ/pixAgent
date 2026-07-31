@@ -1,20 +1,24 @@
 # Deploying Pix Post Builder
 
-Pix can run in two shapes. **Railway is now the recommended target** — see
-[Deploying to Railway](#deploying-to-railway-recommended) below. The Vercel
-instructions that follow still work and are kept until the Railway cutover
-is verified.
+## Current architecture
 
-**Why Railway:** `server.mjs` is a strict superset of `api/` — it routes all
-11 serverless endpoints plus two more (`/api/scrape`, `/api/twitter/post`).
-Running it means ONE backend implementation instead of three (`api/`,
-`server.mjs`, `netlify/functions/`), which today all carry duplicate copies
-of `EDITORIAL_SYSTEM_PROMPT`, `clampBullet`, `repairBullets`, `clampTweet`,
-`buildEnhancePrompt` and more. Every editorial change currently has to be
-applied twice or local silently diverges from production.
+The website runs on **Vercel**. Two things that can't run in a serverless
+function live on **Railway** as separate services:
 
-Railway also removes the two limits that shaped the video feature: the
-4.5 MB serverless request-body cap and the 300s function timeout.
+| Piece | Host | Why |
+|---|---|---|
+| Website + all `/api/*` routes | Vercel | static + serverless functions |
+| `upscaler/` — AI Enhance | Railway | PyTorch + model weights, minutes-long jobs |
+| `media/` — Slide 2 video | Railway | yt-dlp + ffmpeg (~150 MB), 4.5 MB body cap, long encodes |
+
+The browser calls the media service **directly** rather than through Vercel:
+serverless request bodies are capped at 4.5 MB and a video upload is routinely
+20–200 MB. `/api/media-token` signs a short-lived HMAC so `MEDIA_SECRET`
+never reaches the client.
+
+Skip to [Railway — media service](#railway--the-media-service-video) for the
+video setup, or [Railway — whole app](#deploying-the-whole-app-to-railway-alternative)
+for the all-in-one alternative.
 
 ## Repo layout
 
@@ -76,7 +80,59 @@ pixAgent/
 
 3. **Deploy** — every push to `main` auto-deploys.
 
-## Deploying to Railway (recommended)
+## Railway — the media service (video)
+
+This is the only Railway service the video feature needs. The website stays
+on Vercel.
+
+1. **railway.app → New Project → Deploy from GitHub repo** → `DridhaTeamHQ/pixAgent`
+2. **Settings → Root Directory: `media`** ← the important one. Without it
+   Railway tries to build the Node app instead.
+   Railway then reads `media/railway.json`: Docker build, healthcheck `/health`.
+3. **Variables:**
+
+   | Name | Value |
+   |---|---|
+   | `MEDIA_SECRET` | `openssl rand -hex 32` |
+   | `ALLOWED_ORIGINS` | your Vercel URLs, comma-separated (see note) |
+   | `YTDLP_COOKIES` | `base64 -w0 cookies.txt` |
+
+4. **Settings → Networking → Generate Domain**
+5. Confirm: `curl https://<domain>/health` →
+   `{"ok":true,"cookies":true,"ffmpeg":true,"ytdlp":true}`
+   If `cookies` is `false`, `YTDLP_COOKIES` didn't decode.
+
+Then in **Vercel → Settings → Environment Variables**, add `MEDIA_URL` (the
+Railway domain, no trailing slash) and `MEDIA_SECRET` (identical to Railway's),
+and **redeploy** — Vercel only picks up env changes on a new deployment.
+
+### ALLOWED_ORIGINS and preview deployments
+
+Vercel gives every preview deployment its own hostname, so a fixed list only
+covers the URLs you name. List your production and branch domains:
+
+```
+https://your-app.vercel.app,https://pix-agent-git-main-<team>.vercel.app
+```
+
+If you test video on preview deploys, set it to `*`. That is not as reckless
+as it looks here: CORS is not the security boundary — the `X-Media-Token`
+HMAC is, and a token can only be obtained from your own Vercel app. CORS is
+defence in depth.
+
+### Cost
+
+The container is always-on and idles at roughly $5/month on Railway's Hobby
+plan, plus usage during encodes. It shares that plan with the upscaler.
+
+## Deploying the whole app to Railway (alternative)
+
+Not required for video. Worth doing if the three-way backend duplication
+becomes painful: `server.mjs` is a strict superset of `api/` (it routes all
+11 endpoints plus `/api/scrape` and `/api/twitter/post`), so running it means
+ONE backend instead of three. Today `EDITORIAL_SYSTEM_PROMPT`, `clampBullet`,
+`repairBullets`, `clampTweet` and `buildEnhancePrompt` all exist in two
+places, and every editorial change has to be applied twice.
 
 The whole app becomes three services in **one Railway project**, sharing a
 project-level variable group.

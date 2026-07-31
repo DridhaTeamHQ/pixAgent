@@ -16,11 +16,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# yt-dlp is pinned to a recent release but is deliberately easy to bump —
 # YouTube changes its player regularly and an outdated yt-dlp is the single
-# most common cause of "download failed". Bump this pin if extraction breaks.
+# most common cause of "download failed", so this pin needs bumping more often
+# than anything else here. 2026.07.04 is the build verified end to end against
+# a real YouTube fetch; check https://github.com/yt-dlp/yt-dlp/releases when
+# extraction starts failing.
 RUN pip install \
-      "yt-dlp==2026.1.26" \
+      "yt-dlp==2026.07.04" \
       fastapi \
       "uvicorn[standard]" \
       python-multipart
