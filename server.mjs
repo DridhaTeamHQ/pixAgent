@@ -212,6 +212,7 @@ const server = http.createServer(async (req, res) => {
         ffmpeg: Boolean(ffmpegAvailable),
         ytdlp: Boolean(ytdlpAvailable),
         ytdlpCookies: Boolean(cookieFilePath),
+        jsRuntime: Boolean(jsRuntimeAvailable),
         pexels: Boolean(pexelsApiKey),
       },
     });
@@ -424,18 +425,42 @@ if (cookieFilePath) {
 // image directly, instead of every export failing with a confusing ENOENT.
 let ffmpegAvailable = false;
 let ytdlpAvailable = false;
+let jsRuntimeAvailable = false;
 (async () => {
-  const [ff, yt] = await Promise.all([
+  const [ff, yt, deno] = await Promise.all([
     run("ffmpeg", ["-version"], 10_000),
     run("yt-dlp", ["--version"], 10_000),
+    run("deno", ["--version"], 10_000),
   ]);
   ffmpegAvailable = ff.code === 0;
   ytdlpAvailable = yt.code === 0;
+  jsRuntimeAvailable = deno.code === 0;
+
   if (ffmpegAvailable && ytdlpAvailable) {
     console.log(`✓ Video ready (yt-dlp ${yt.stdout.toString().trim()})`);
   } else {
     if (!ffmpegAvailable) console.warn("⚠ ffmpeg not found — video export will fail.");
     if (!ytdlpAvailable) console.warn("⚠ yt-dlp not found — link fetching will fail.");
+  }
+
+  // This combination is a trap, so it gets its own warning.
+  //
+  // Authenticated YouTube requests are served formats whose URLs must be
+  // deciphered by running YouTube's JavaScript. Anonymous requests get
+  // simpler ones. So without a JS runtime, adding cookies makes extraction
+  // FAIL where it previously worked: measured locally, android_vr resolves
+  // fine with no cookies and fails with "Requested format is not available"
+  // once cookies are supplied. Cookies and deno are a package deal.
+  if (!jsRuntimeAvailable) {
+    if (cookieFilePath) {
+      console.warn(
+        "⚠ YTDLP_COOKIES is set but no JS runtime (deno) was found. Authenticated " +
+        "YouTube extraction REQUIRES one — every fetch will fail with \"Requested " +
+        "format is not available\". Deploy the current Dockerfile, or unset YTDLP_COOKIES."
+      );
+    } else {
+      console.warn("⚠ No JS runtime (deno) — YouTube extraction is limited and cookies will not work.");
+    }
   }
 })();
 
