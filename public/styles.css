@@ -2257,3 +2257,42 @@ textarea:focus {
 }
 
 #video-export-btn { width: 100%; }
+
+/* Export-in-progress feedback. A clip export runs 5-30s (download + encode);
+   without a visible working state the button looks inert and reads as broken. */
+#video-export-btn.working {
+  opacity: 1;                 /* override the generic :disabled dimming */
+  cursor: progress;
+}
+
+#video-export-btn.working .export-icon {
+  animation: export-spin 0.9s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+@keyframes export-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Indeterminate bar — the encode gives no percentage, so this conveys
+   "still working" rather than a fake progress value. */
+.export-progress {
+  height: 3px;
+  margin-top: 8px;
+  border-radius: 100px;
+  background: var(--sunken);
+  overflow: hidden;
+}
+
+.export-progress-bar {
+  height: 100%;
+  width: 35%;
+  border-radius: 100px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-deep));
+  animation: export-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes export-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(340%); }
+}

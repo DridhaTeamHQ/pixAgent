@@ -322,9 +322,12 @@
               </label>
 
               <button type="button" id="video-export-btn" class="btn-primary btn-export">
-                <svg width="15" height="15" aria-hidden="true"><use href="#i-download"/></svg>
-                Export Video
+                <svg class="export-icon" width="15" height="15" aria-hidden="true"><use href="#i-download"/></svg>
+                <span id="video-export-label">Export Video</span>
               </button>
+              <div class="export-progress" id="video-export-progress" hidden>
+                <div class="export-progress-bar"></div>
+              </div>
             </div>
 
           </div></div>

@@ -3450,9 +3450,30 @@ async function getMediaEndpoint() {
   const res = await fetch("/api/media-token", { method: "POST" });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
+    // 503 means MEDIA_URL is unset. Locally that is nearly always a stale
+    // process: the server reads .env once at startup, so adding MEDIA_URL
+    // to .env does nothing until it restarts. Say so — the bare
+    // "not configured" message sends people hunting in the wrong place.
+    if (res.status === 503 && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
+      throw new Error(
+        "MEDIA_URL is not set. If you just added it to .env, restart the dev server — " +
+        ".env is read once at startup."
+      );
+    }
     throw new Error(data.error || "Video is not configured on this deployment.");
   }
   return res.json();   // { mediaUrl, token }
+}
+
+// Swap the export button into a visible working state. The encode reports no
+// percentage, so this is an indeterminate "still going" signal, not progress.
+function setExportWorking(working) {
+  const btn = document.getElementById("video-export-btn");
+  const label = document.getElementById("video-export-label");
+  const bar = document.getElementById("video-export-progress");
+  if (btn) btn.classList.toggle("working", working);
+  if (label) label.textContent = working ? "Exporting…" : "Export Video";
+  if (bar) bar.hidden = !working;
 }
 
 function mediaHeaders(token, extra = {}) {
@@ -3703,6 +3724,7 @@ async function exportVideoClip() {
 
   state.videoExporting = true;
   syncTrimUI();
+  setExportWorking(true);
   setVideoStatus("Rendering overlay…");
 
   try {
@@ -3749,9 +3771,15 @@ async function exportVideoClip() {
 
     setVideoStatus(`Exported ${(blob.size / 1048576).toFixed(1)} MB · ${width}×${height}`, "success");
   } catch (err) {
-    setVideoStatus(err.message || "Export failed.", "error");
+    // A cross-origin failure surfaces as a bare "Failed to fetch", which tells
+    // the user nothing — name the likely cause.
+    const msg = /failed to fetch|networkerror|load failed/i.test(err.message || "")
+      ? "Could not reach the media service. Is it running, and does ALLOWED_ORIGINS include this site?"
+      : (err.message || "Export failed.");
+    setVideoStatus(msg, "error");
   } finally {
     state.videoExporting = false;
+    setExportWorking(false);
     syncTrimUI();
   }
 }
