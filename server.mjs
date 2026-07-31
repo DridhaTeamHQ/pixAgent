@@ -108,6 +108,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if ((req.method === "POST" || req.method === "GET") && req.url === "/api/media-token") {
+    await handleMediaToken(req, res);
+    return;
+  }
+
   if (req.method === "GET" && req.url?.startsWith("/api/stock-images?")) {
     await handleStockImages(req, res);
     return;
@@ -253,6 +258,30 @@ async function handleGoogleImages(req, res) {
     sendJson(res, 200, { images, source: images.length ? "web" : "none" });
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Image search failed." });
+  }
+}
+
+// Mirror of api/media-token.js — see that file for why the browser talks to
+// the media service directly instead of proxying through here.
+const MEDIA_TOKEN_TTL_SECONDS = 15 * 60;
+
+async function handleMediaToken(req, res) {
+  try {
+    const base = (process.env.MEDIA_URL || secrets.MEDIA_URL || "").replace(/\/+$/, "");
+    if (!base) {
+      sendJson(res, 503, { error: "Video is not configured on this deployment (MEDIA_URL unset)." });
+      return;
+    }
+    const secret = process.env.MEDIA_SECRET || secrets.MEDIA_SECRET || "";
+    let token = "";
+    if (secret) {
+      const expiry = String(Math.floor(Date.now() / 1000) + MEDIA_TOKEN_TTL_SECONDS);
+      const sig = createHmac("sha256", secret).update(expiry).digest("hex");
+      token = `${expiry}.${sig}`;
+    }
+    sendJson(res, 200, { mediaUrl: base, token, expiresIn: MEDIA_TOKEN_TTL_SECONDS });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || "Could not mint a media token." });
   }
 }
 

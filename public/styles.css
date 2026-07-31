@@ -2109,3 +2109,143 @@ textarea:focus {
 .theme-toggle .icon-moon { display: block; }
 :root[data-theme="dark"] .theme-toggle .icon-sun  { display: block; }
 :root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+
+/* ═══════════════════════════════════════════════════════════════
+   Slide 2 video — source tabs, trim controls, preview
+   All colours come from the semantic tokens, so light/dark follow
+   the theme automatically with no per-theme overrides needed.
+   ═══════════════════════════════════════════════════════════════ */
+
+.video-source-tabs {
+  display: flex;
+  gap: 3px;
+  background: var(--surface-input);
+  border: 1px solid var(--border-color);
+  border-radius: 100px;
+  padding: 3px;
+  margin-bottom: 12px;
+}
+
+.video-source-tab {
+  flex: 1;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 100px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.video-source-tab:hover { color: var(--text-primary); }
+
+.video-source-tab.active {
+  background: linear-gradient(135deg, rgba(155, 114, 239, 0.28), rgba(80, 80, 230, 0.18));
+  color: var(--accent-dim);
+  box-shadow: 0 0 0 1px rgba(155, 114, 239, 0.32);
+}
+
+.video-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.video-url-row input[type="url"] { flex: 1; min-width: 0; }
+.video-url-row .btn-secondary { flex: 0 0 auto; padding-inline: 16px; }
+
+/* Local-file drop zone — label wraps a hidden input so the whole box clicks */
+.video-file-drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 20px 14px;
+  border: 1.5px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition: var(--transition);
+}
+
+.video-file-drop:hover,
+.video-file-drop.dragover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.video-file-drop svg { opacity: 0.7; flex-shrink: 0; }
+
+.video-preview {
+  width: 100%;
+  max-height: 240px;
+  margin: 4px 0 14px;
+  border-radius: var(--radius-md);
+  background: #000;
+  display: block;
+}
+
+/* Trim time readout — start on the left, end on the right, duration centred */
+.trim-readout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.trim-duration {
+  padding: 3px 10px;
+  border-radius: 100px;
+  background: var(--accent-soft);
+  color: var(--accent-dim);
+  font-weight: 700;
+}
+
+.trim-duration.over-limit {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--red);
+}
+
+.trim-actions {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0 14px;
+}
+
+.trim-actions .btn-tiny {
+  flex: 1;
+  padding: 7px 8px;
+  font-size: 0.74rem;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+#video-export-btn { width: 100%; }

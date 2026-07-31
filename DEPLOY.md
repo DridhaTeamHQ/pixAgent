@@ -40,6 +40,14 @@ pixAgent/
    | `FAL_KEY` | Flux-generated background images |
    | `SHORTLY_AGENT_AUTH_SECRET` | Shortly Agents signed access tokens |
    | `PEXELS_API_KEY` | Stock background images |
+   | `UPSCALER_URL` / `UPSCALER_SECRET` | Self-hosted AI Enhance (see `upscaler/README.md`) |
+   | `MEDIA_URL` / `MEDIA_SECRET` | Slide 2 video — YouTube/Instagram scraping, trim, branded MP4 export (see `media/README.md`) |
+
+   `MEDIA_URL` points at the Railway media service. Leave it empty and the
+   video feature reports itself unconfigured instead of failing obscurely.
+   `MEDIA_SECRET` must match the value set on that service — the browser
+   uploads video straight to Railway (Vercel caps request bodies at 4.5 MB),
+   authenticated by a short-lived token this backend signs with that secret.
 
    `SHORTLY_AGENT_AUTH_SECRET` must be the same secret used by Shortly Agents
    to sign Pix launch tokens. Pix accepts tokens shaped as

@@ -220,7 +220,23 @@ const state = {
   logoImage: null,
   shortlyLogoImage: null,   // alt logo used when exporting for X
   useShortlyLogo: false,    // toggled by the X download handler
-  previewMode: "pix",       // "pix" | "x" | "text"
+  previewMode: "pix",       // "pix" | "x" | "text" | "video"
+
+  /* ── Slide 2 video ──
+     Slide 2 is either the Text card or a trimmed, branded video clip.
+     `videoEl` is the <video> element itself — drawn straight to the canvas
+     in preview, and the source of truth for trim bounds. `videoFile` is set
+     for local uploads, `videoUrl` for scraped YouTube/Instagram links; the
+     export path picks whichever is present. */
+  videoEl: null,
+  videoUrl: "",             // resolved source URL (scrape path)
+  videoFile: null,          // File object (local upload path)
+  videoMeta: null,          // { title, duration, uploader, ... } from /resolve
+  videoSourceKind: "link",  // "link" | "file"
+  trimStart: 0,
+  trimEnd: 0,
+  videoMuted: false,
+  videoExporting: false,
   secondLogoImage: null,
   tag: "none",       // "none" | "trending" | "breaking"
   tagImages: {},     // { trending: Image, breaking: Image }
@@ -380,9 +396,11 @@ if (previewModeToggle) {
   previewModeToggle.addEventListener("click", (e) => {
     const btn = e.target.closest(".preview-mode-btn");
     if (!btn) return;
-    const mode = ["pix", "x", "text"].includes(btn.dataset.previewMode) ? btn.dataset.previewMode : "pix";
+    const mode = ["pix", "x", "text", "video"].includes(btn.dataset.previewMode) ? btn.dataset.previewMode : "pix";
     state.previewMode = mode;
     syncPreviewModeUI();
+    // Video mode drives its own repaint loop while the clip plays.
+    if (mode === "video") startVideoPreviewLoop(); else stopVideoPreviewLoop();
     if (mode === "text" && state.aspectRatio !== "9:16") {
       applyAspectRatio("9:16");
       return;
@@ -520,6 +538,13 @@ function isXRenderMode() {
 
 function isTextPreviewMode() {
   return state.previewMode === "text" && (!state.isDownloading || state.forceTextExport);
+}
+
+// True while painting the video slide. `videoOverlayExport` is set only by
+// renderVideoOverlayPng(), which needs the branding layer on transparency
+// with no video frame and no mockup chrome underneath it.
+function isVideoPreviewMode() {
+  return state.previewMode === "video" || state.videoOverlayExport;
 }
 
 function syncPreviewModeUI() {
@@ -1896,6 +1921,11 @@ function renderPoster() {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
 
+  if (isVideoPreviewMode()) {
+    drawPixVideoScreen();
+    return;
+  }
+
   if (isTextPreviewMode()) {
     drawPixTextScreen();
     return;
@@ -1924,6 +1954,153 @@ function renderPoster() {
   if (enhanceBtn && !enhanceBtn.classList.contains("working")) {
     enhanceBtn.disabled = !state.mainImage;
   }
+}
+
+/**
+ * Slide 2, video variant: the clip fills the frame with the Shortly/Pix
+ * branding over it.
+ *
+ * This same function produces BOTH the on-screen preview and the transparent
+ * PNG that ffmpeg burns into the exported MP4 — see renderVideoOverlayPng().
+ * Sharing one renderer is the whole point: the branding in the file is
+ * guaranteed to be what the user approved on screen, and the media service
+ * never needs a font, a layout table, or a redeploy when the design changes.
+ *
+ * In overlay-export mode the video frame and the mockup chrome are skipped,
+ * leaving gradient + logo on transparency.
+ */
+function drawPixVideoScreen() {
+  const W = canvas.width;
+  const H = canvas.height;
+  const L = getLayout();
+  const s = Math.min(W / 920, H / 1700);
+  const overlayOnly = !!state.videoOverlayExport;
+
+  ctx.save();
+
+  if (!overlayOnly) {
+    // Letterbox backdrop, then the current video frame scaled to cover.
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, W, H);
+    const v = state.videoEl;
+    if (v && v.readyState >= 2 && v.videoWidth > 0) {
+      const scale = Math.max(W / v.videoWidth, H / v.videoHeight);
+      const dw = v.videoWidth * scale;
+      const dh = v.videoHeight * scale;
+      ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    }
+  }
+
+  // Bottom scrim so the logo and any platform UI stay legible over bright
+  // footage. Lighter than the poster's gradient — the video is the subject
+  // here, not a backdrop for a headline.
+  const opa = (state.overlayOpacity ?? 100) / 100;
+  const fade = Math.min(H * 0.42, L.gradient.fadeHeight * 1.5);
+  const grad = ctx.createLinearGradient(0, H - fade, 0, H);
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  grad.addColorStop(0.55, `rgba(0,0,0,${(0.34 * opa).toFixed(2)})`);
+  grad.addColorStop(1, `rgba(0,0,0,${(0.72 * opa).toFixed(2)})`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, H - fade, W, fade);
+
+  // A matching top scrim keeps the logo readable on light footage.
+  const topFade = H * 0.18;
+  const topGrad = ctx.createLinearGradient(0, 0, 0, topFade);
+  topGrad.addColorStop(0, `rgba(0,0,0,${(0.46 * opa).toFixed(2)})`);
+  topGrad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = topGrad;
+  ctx.fillRect(0, 0, W, topFade);
+
+  drawFixedLogos();
+
+  // Mockup chrome is preview-only — it must never reach the exported file.
+  if (!overlayOnly && !state.isDownloading && getLayout().showPreviewBars) {
+    drawEngagementBar();
+    drawPixPageDots(0.5 * W, 1558 * (H / 1700), s);
+    drawNavBar();
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Render the video branding to a transparent PNG blob at exactly
+ * `width`×`height` — the dimensions ffmpeg will scale the clip to, so the
+ * overlay lands pixel-for-pixel with no resampling drift.
+ */
+async function renderVideoOverlayPng(width, height) {
+  const out = document.createElement("canvas");
+  out.width = width;
+  out.height = height;
+  const outCtx = out.getContext("2d");
+  outCtx.imageSmoothingEnabled = true;
+  outCtx.imageSmoothingQuality = "high";
+  // Design-space → output-space. The canvas preset drives layout, so this is
+  // a uniform scale by construction and the overlay can't skew.
+  outCtx.scale(width / canvas.width, height / canvas.height);
+
+  const prevCtx = ctx;
+  const prevMode = state.previewMode;
+  ctx = outCtx;
+  state.videoOverlayExport = true;
+  state.previewMode = "video";
+  try {
+    drawPixVideoScreen();
+  } finally {
+    ctx = prevCtx;
+    state.videoOverlayExport = false;
+    state.previewMode = prevMode;
+  }
+
+  return new Promise((resolve) => {
+    try { out.toBlob(resolve, "image/png"); } catch { resolve(null); }
+  });
+}
+
+/**
+ * Output size for the exported MP4. Width is pinned to 1080 (the practical
+ * ceiling for Reels/Stories/Shorts) and height follows the CANVAS aspect,
+ * not a nominal 9:16 — the "9:16" preset is really 920×1700 (0.541), so
+ * assuming true 9:16 here would misalign the overlay by ~90px.
+ * Both dimensions are forced even; libx264 + yuv420p requires it.
+ */
+function videoTargetSize() {
+  const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+  // The overlay is drawn, not resampled, so targeting a larger frame than the
+  // design canvas costs nothing in quality. Portrait and square go to 1080
+  // wide (the Reels/Stories/Shorts standard); landscape goes to 1920.
+  const width = even(canvas.width > canvas.height ? 1920 : 1080);
+  const height = even(width * (canvas.height / canvas.width));
+  return { width, height };
+}
+
+/* ── Preview repaint loop ──
+   A <video> gives the canvas no "new frame" signal, so during playback we
+   repaint every animation frame. It runs ONLY while the clip is actually
+   playing — a paused video produces identical frames, and looping on those
+   would burn a core for nothing. Seeks and loads repaint once instead
+   (see the listeners further down). */
+let videoPreviewRaf = 0;
+
+function startVideoPreviewLoop() {
+  if (videoPreviewRaf) return;
+  const tick = () => {
+    const v = state.videoEl;
+    // Park as soon as the mode changes or playback stops.
+    if (state.previewMode !== "video" || !v || v.paused || v.ended) {
+      videoPreviewRaf = 0;
+      renderPoster();   // settle on the final frame
+      return;
+    }
+    renderPoster();
+    videoPreviewRaf = requestAnimationFrame(tick);
+  };
+  videoPreviewRaf = requestAnimationFrame(tick);
+}
+
+function stopVideoPreviewLoop() {
+  if (videoPreviewRaf) cancelAnimationFrame(videoPreviewRaf);
+  videoPreviewRaf = 0;
 }
 
 function drawPixTextScreen() {
@@ -3217,3 +3394,382 @@ if (aiEnhanceBtn) {
     applyTheme(next);
   });
 })();
+
+/* ═══════════════════════ Slide 2 — video ═══════════════════════
+
+   Slide 2 is either the Text card or a video clip. The clip comes from a
+   YouTube/Instagram link (fetched server-side with yt-dlp) or a local file,
+   gets trimmed to a range chosen here, and is exported with the Pix branding
+   burned in by ffmpeg.
+
+   The browser talks to the media service DIRECTLY rather than through
+   /api/*. Vercel caps serverless request bodies at 4.5 MB and a local video
+   is routinely far bigger, so a proxy hop is impossible. /api/media-token
+   hands back the service URL plus a short-lived HMAC token; MEDIA_SECRET
+   itself never reaches the client.
+   ══════════════════════════════════════════════════════════════ */
+
+const MAX_CLIP_SECONDS = 90;          // matches MAX_CLIP_SECONDS on the service
+const MAX_VIDEO_UPLOAD_BYTES = 300 * 1024 * 1024;
+
+const videoUrlInput    = document.getElementById("video-url");
+const videoFetchBtn    = document.getElementById("video-fetch-btn");
+const videoFileInput   = document.getElementById("video-file-input");
+const videoFileDrop    = document.getElementById("video-file-drop");
+const videoFileLabel   = document.getElementById("video-file-label");
+const videoStatusEl    = document.getElementById("video-status");
+const videoEditor      = document.getElementById("video-editor");
+const videoPreviewEl   = document.getElementById("video-preview");
+const videoSourceTabs  = document.getElementById("video-source-tabs");
+const trimStartInput   = document.getElementById("trim-start");
+const trimEndInput     = document.getElementById("trim-end");
+const trimStartLabel   = document.getElementById("trim-start-label");
+const trimEndLabel     = document.getElementById("trim-end-label");
+const trimDurationEl   = document.getElementById("trim-duration");
+const videoMuteInput   = document.getElementById("video-mute");
+const videoExportBtn   = document.getElementById("video-export-btn");
+
+function setVideoStatus(message, type) {
+  if (!videoStatusEl) return;
+  videoStatusEl.textContent = message || "";
+  videoStatusEl.className = "status-text";
+  if (type) videoStatusEl.classList.add(type);
+}
+
+function formatTimecode(seconds) {
+  const s = Math.max(0, seconds || 0);
+  const m = Math.floor(s / 60);
+  const rest = s - m * 60;
+  return `${m}:${rest.toFixed(1).padStart(4, "0")}`;
+}
+
+/* ── Media service handshake ──
+   Tokens are minted per operation rather than cached: they expire, and a
+   fetch is far cheaper than reasoning about staleness mid-upload. */
+async function getMediaEndpoint() {
+  const res = await fetch("/api/media-token", { method: "POST" });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Video is not configured on this deployment.");
+  }
+  return res.json();   // { mediaUrl, token }
+}
+
+function mediaHeaders(token, extra = {}) {
+  return token ? { "X-Media-Token": token, ...extra } : { ...extra };
+}
+
+async function mediaErrorMessage(res) {
+  const data = await res.json().catch(() => null);
+  if (data && data.detail) return data.detail;
+  if (res.status === 401) return "The media service rejected this request. Check MEDIA_SECRET.";
+  if (res.status === 413) return "That file is too large.";
+  return `Media service error ${res.status}.`;
+}
+
+/* ── Source: pasted link ── */
+async function fetchVideoFromUrl(url) {
+  setVideoStatus("Fetching video details…");
+  if (videoFetchBtn) videoFetchBtn.disabled = true;
+  try {
+    const { mediaUrl, token } = await getMediaEndpoint();
+    const res = await fetch(`${mediaUrl}/resolve`, {
+      method: "POST",
+      headers: mediaHeaders(token, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) throw new Error(await mediaErrorMessage(res));
+
+    const meta = await res.json();
+    state.videoUrl = meta.webpage_url || url;
+    state.videoFile = null;
+    state.videoMeta = meta;
+    state.videoSourceKind = "link";
+
+    // The <video> element cannot play a YouTube page URL, so the on-canvas
+    // preview stays black until export. The trim range still works: it is
+    // driven by the duration yt-dlp reported, not by a decoded stream.
+    if (videoPreviewEl) {
+      videoPreviewEl.removeAttribute("src");
+      videoPreviewEl.load();
+      videoPreviewEl.poster = meta.thumbnail || "";
+    }
+    setupTrimRange(meta.duration || 0);
+    if (videoEditor) videoEditor.hidden = false;
+
+    const len = meta.duration ? ` · ${formatTimecode(meta.duration)}` : "";
+    setVideoStatus(`${meta.title || "Video"}${len}`, "success");
+  } catch (err) {
+    setVideoStatus(err.message, "error");
+  } finally {
+    if (videoFetchBtn) videoFetchBtn.disabled = false;
+  }
+}
+
+/* ── Source: local file ── */
+function loadLocalVideoFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith("video/")) {
+    setVideoStatus("That is not a video file.", "error");
+    return;
+  }
+  if (file.size > MAX_VIDEO_UPLOAD_BYTES) {
+    setVideoStatus(`That file is ${(file.size / 1048576).toFixed(0)} MB; the limit is 300 MB.`, "error");
+    return;
+  }
+
+  state.videoFile = file;
+  state.videoUrl = "";
+  state.videoMeta = null;
+  state.videoSourceKind = "file";
+  if (videoFileLabel) videoFileLabel.textContent = file.name;
+
+  const objectUrl = URL.createObjectURL(file);
+  if (videoPreviewEl) {
+    videoPreviewEl.poster = "";
+    videoPreviewEl.src = objectUrl;
+    // Revoking on load would break seeking — the URL is released when the
+    // source is replaced instead.
+    videoPreviewEl.addEventListener("loadedmetadata", () => {
+      setupTrimRange(videoPreviewEl.duration || 0);
+      if (videoEditor) videoEditor.hidden = false;
+      setVideoStatus(`${file.name} · ${formatTimecode(videoPreviewEl.duration)}`, "success");
+      renderPoster();
+    }, { once: true });
+  }
+}
+
+/* ── Trim ── */
+function setupTrimRange(duration) {
+  const dur = Math.max(0, duration || 0);
+  state.trimStart = 0;
+  state.trimEnd = Math.min(dur || MAX_CLIP_SECONDS, MAX_CLIP_SECONDS);
+  if (trimStartInput) {
+    trimStartInput.max = String(dur || MAX_CLIP_SECONDS);
+    trimStartInput.value = "0";
+  }
+  if (trimEndInput) {
+    trimEndInput.max = String(dur || MAX_CLIP_SECONDS);
+    trimEndInput.value = String(state.trimEnd);
+  }
+  syncTrimUI();
+}
+
+function syncTrimUI() {
+  const duration = Math.max(0, state.trimEnd - state.trimStart);
+  if (trimStartLabel) trimStartLabel.textContent = formatTimecode(state.trimStart);
+  if (trimEndLabel) trimEndLabel.textContent = formatTimecode(state.trimEnd);
+  if (trimDurationEl) {
+    trimDurationEl.textContent = `${duration.toFixed(1)}s`;
+    trimDurationEl.classList.toggle("over-limit", duration > MAX_CLIP_SECONDS || duration <= 0);
+  }
+  if (videoExportBtn) {
+    videoExportBtn.disabled =
+      state.videoExporting || duration <= 0 || duration > MAX_CLIP_SECONDS ||
+      (!state.videoUrl && !state.videoFile);
+  }
+}
+
+// Start and End get one range input each; clamping here (rather than
+// building a custom dual-handle widget) is what stops them crossing over.
+if (trimStartInput) {
+  trimStartInput.addEventListener("input", () => {
+    state.trimStart = Math.min(parseFloat(trimStartInput.value) || 0, state.trimEnd - 0.1);
+    trimStartInput.value = String(state.trimStart);
+    if (videoPreviewEl && videoPreviewEl.src) videoPreviewEl.currentTime = state.trimStart;
+    syncTrimUI();
+  });
+}
+
+if (trimEndInput) {
+  trimEndInput.addEventListener("input", () => {
+    state.trimEnd = Math.max(parseFloat(trimEndInput.value) || 0, state.trimStart + 0.1);
+    trimEndInput.value = String(state.trimEnd);
+    if (videoPreviewEl && videoPreviewEl.src) videoPreviewEl.currentTime = state.trimEnd;
+    syncTrimUI();
+  });
+}
+
+const trimSetStartBtn = document.getElementById("trim-set-start");
+if (trimSetStartBtn) {
+  trimSetStartBtn.addEventListener("click", () => {
+    if (!videoPreviewEl || !videoPreviewEl.src) return;
+    state.trimStart = Math.min(videoPreviewEl.currentTime, state.trimEnd - 0.1);
+    if (trimStartInput) trimStartInput.value = String(state.trimStart);
+    syncTrimUI();
+  });
+}
+
+const trimSetEndBtn = document.getElementById("trim-set-end");
+if (trimSetEndBtn) {
+  trimSetEndBtn.addEventListener("click", () => {
+    if (!videoPreviewEl || !videoPreviewEl.src) return;
+    state.trimEnd = Math.max(videoPreviewEl.currentTime, state.trimStart + 0.1);
+    if (trimEndInput) trimEndInput.value = String(state.trimEnd);
+    syncTrimUI();
+  });
+}
+
+// Preview exactly the selected range, then stop at the out-point.
+const trimPlayBtn = document.getElementById("trim-play");
+if (trimPlayBtn) {
+  trimPlayBtn.addEventListener("click", () => {
+    if (!videoPreviewEl || !videoPreviewEl.src) {
+      setVideoStatus("Range preview needs a local file — linked videos play after export.", "error");
+      return;
+    }
+    videoPreviewEl.currentTime = state.trimStart;
+    videoPreviewEl.play();
+    const stopAtEnd = () => {
+      if (videoPreviewEl.currentTime >= state.trimEnd) {
+        videoPreviewEl.pause();
+        videoPreviewEl.removeEventListener("timeupdate", stopAtEnd);
+      }
+    };
+    videoPreviewEl.addEventListener("timeupdate", stopAtEnd);
+  });
+}
+
+if (videoMuteInput) {
+  videoMuteInput.addEventListener("change", () => {
+    state.videoMuted = videoMuteInput.checked;
+  });
+}
+
+/* ── Source tabs ── */
+if (videoSourceTabs) {
+  videoSourceTabs.addEventListener("click", (e) => {
+    const btn = e.target.closest(".video-source-tab");
+    if (!btn) return;
+    const kind = btn.dataset.videoSource === "file" ? "file" : "link";
+    videoSourceTabs.querySelectorAll(".video-source-tab").forEach((t) => {
+      const active = t === btn;
+      t.classList.toggle("active", active);
+      t.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    document.getElementById("video-source-link").hidden = kind !== "link";
+    document.getElementById("video-source-file").hidden = kind !== "file";
+  });
+}
+
+if (videoFetchBtn) {
+  videoFetchBtn.addEventListener("click", () => {
+    const url = (videoUrlInput ? videoUrlInput.value : "").trim();
+    if (!/^https?:\/\//i.test(url)) {
+      setVideoStatus("Paste a full https:// link.", "error");
+      return;
+    }
+    fetchVideoFromUrl(url);
+  });
+}
+
+if (videoUrlInput) {
+  videoUrlInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); if (videoFetchBtn) videoFetchBtn.click(); }
+  });
+}
+
+if (videoFileInput) {
+  videoFileInput.addEventListener("change", (e) => loadLocalVideoFile(e.target.files && e.target.files[0]));
+}
+
+if (videoFileDrop) {
+  ["dragenter", "dragover"].forEach((ev) =>
+    videoFileDrop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      videoFileDrop.classList.add("dragover");
+    })
+  );
+  ["dragleave", "drop"].forEach((ev) =>
+    videoFileDrop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      videoFileDrop.classList.remove("dragover");
+    })
+  );
+  videoFileDrop.addEventListener("drop", (e) => {
+    const files = (e.dataTransfer && e.dataTransfer.files) || [];
+    const file = [...files].find((f) => f.type.startsWith("video/"));
+    if (file) loadLocalVideoFile(file);
+    else setVideoStatus("Drop a video file.", "error");
+  });
+}
+
+/* ── Export ── */
+async function exportVideoClip() {
+  if (state.videoExporting) return;
+  const duration = state.trimEnd - state.trimStart;
+  if (duration <= 0) { setVideoStatus("Set a trim range first.", "error"); return; }
+  if (!state.videoUrl && !state.videoFile) { setVideoStatus("Load a video first.", "error"); return; }
+
+  state.videoExporting = true;
+  syncTrimUI();
+  setVideoStatus("Rendering overlay…");
+
+  try {
+    const { width, height } = videoTargetSize();
+    const overlay = await renderVideoOverlayPng(width, height);
+    const { mediaUrl, token } = await getMediaEndpoint();
+
+    const form = new FormData();
+    form.append("start", String(state.trimStart));
+    form.append("end", String(state.trimEnd));
+    form.append("width", String(width));
+    form.append("height", String(height));
+    form.append("mute", state.videoMuted ? "true" : "false");
+    if (overlay) form.append("overlay", overlay, "overlay.png");
+    if (state.videoFile) {
+      form.append("video", state.videoFile, state.videoFile.name);
+      setVideoStatus(`Uploading and encoding ${duration.toFixed(1)}s… this can take a few minutes.`);
+    } else {
+      form.append("url", state.videoUrl);
+      setVideoStatus(`Downloading and encoding ${duration.toFixed(1)}s… this can take a few minutes.`);
+    }
+
+    // No AbortController timeout: a long download plus encode legitimately
+    // runs for minutes, and aborting here would kill work the service is
+    // still doing without telling it to stop.
+    const res = await fetch(`${mediaUrl}/clip`, {
+      method: "POST",
+      headers: mediaHeaders(token),   // no Content-Type — the browser sets the multipart boundary
+      body: form,
+    });
+    if (!res.ok) throw new Error(await mediaErrorMessage(res));
+
+    const blob = await res.blob();
+    if (blob.size < 1000) throw new Error("The encoder returned an empty file.");
+
+    const title = (state.videoMeta && state.videoMeta.title) || state.headline || "pix-clip";
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${slugify(title)}-slide2.mp4`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+
+    setVideoStatus(`Exported ${(blob.size / 1048576).toFixed(1)} MB · ${width}×${height}`, "success");
+  } catch (err) {
+    setVideoStatus(err.message || "Export failed.", "error");
+  } finally {
+    state.videoExporting = false;
+    syncTrimUI();
+  }
+}
+
+if (videoExportBtn) videoExportBtn.addEventListener("click", exportVideoClip);
+
+// The canvas preview reads frames straight off this element.
+if (videoPreviewEl) {
+  state.videoEl = videoPreviewEl;
+  // Playback drives the rAF loop; everything else is a single repaint.
+  videoPreviewEl.addEventListener("play", () => {
+    if (state.previewMode === "video") startVideoPreviewLoop();
+  });
+  ["seeked", "loadeddata", "pause", "ended"].forEach((ev) =>
+    videoPreviewEl.addEventListener(ev, () => {
+      if (state.previewMode === "video") renderPoster();
+    })
+  );
+}
+
+syncTrimUI();
