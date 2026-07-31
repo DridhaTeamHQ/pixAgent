@@ -2154,8 +2154,16 @@ textarea:focus {
   align-items: stretch;
 }
 
-.video-url-row input[type="url"] { flex: 1; min-width: 0; }
-.video-url-row .btn-secondary { flex: 0 0 auto; padding-inline: 16px; }
+.video-url-row input[type="url"] { flex: 1 1 auto; min-width: 0; }
+
+/* .btn-secondary is width:100% globally, which would starve the input to a
+   stub — reset it so the button hugs its label and the field takes the rest. */
+.video-url-row .btn-secondary {
+  flex: 0 0 auto;
+  width: auto;
+  padding-inline: 18px;
+  white-space: nowrap;
+}
 
 /* Local-file drop zone — label wraps a hidden input so the whole box clicks */
 .video-file-drop {
