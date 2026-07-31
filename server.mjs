@@ -153,6 +153,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Railway (and any other platform healthcheck) pings this.
+  if (req.method === "GET" && (req.url === "/health" || req.url === "/healthz")) {
+    sendJson(res, 200, {
+      ok: true,
+      uptime: Math.round(process.uptime()),
+      features: {
+        openai: Boolean(process.env.OPENAI_API_KEY || secrets.OPENAI_API_KEY),
+        upscaler: Boolean(process.env.UPSCALER_URL || secrets.UPSCALER_URL),
+        media: Boolean(process.env.MEDIA_URL || secrets.MEDIA_URL),
+        pexels: Boolean(pexelsApiKey),
+      },
+    });
+    return;
+  }
+
   // Static file serving — URL-decode so paths with %20 (spaces) etc. resolve.
   let urlPath = req.url === "/" ? "/index.html" : req.url;
   // Drop any query string before disk lookup
@@ -168,13 +183,56 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  res.writeHead(200, { "Content-Type": types[extname(filePath).toLowerCase()] || "application/octet-stream" });
+  // ── Caching ──
+  // On Vercel the CDN handled this. Serving directly, we have to: without
+  // it every page load re-downloads app.js (~180 KB) and the logos.
+  //
+  // Assets that carry no content hash (app.js, styles.css, index.html) get
+  // `no-cache`, which means "revalidate every time" — NOT "don't store".
+  // Combined with Last-Modified the browser sends If-Modified-Since and we
+  // answer 304 with an empty body: the bytes are saved, and a deploy can
+  // never serve stale code. Images and fonts are immutable in practice and
+  // get a real max-age.
+  const stat = statSync(filePath);
+  const ext = extname(filePath).toLowerCase();
+  const lastModified = stat.mtime.toUTCString();
+
+  const ims = req.headers["if-modified-since"];
+  if (ims && Date.parse(ims) >= Math.floor(stat.mtimeMs / 1000) * 1000) {
+    res.writeHead(304, { "Last-Modified": lastModified });
+    res.end();
+    return;
+  }
+
+  const immutable = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico", ".woff", ".woff2"];
+  const cacheControl = immutable.includes(ext)
+    ? "public, max-age=86400"
+    : "no-cache";
+
+  res.writeHead(200, {
+    "Content-Type": types[ext] || "application/octet-stream",
+    "Content-Length": stat.size,
+    "Last-Modified": lastModified,
+    "Cache-Control": cacheControl,
+    "X-Content-Type-Options": "nosniff",
+  });
   createReadStream(filePath).pipe(res);
 });
 
 server.listen(port, () => {
   console.log(`Pix Post Builder running at http://localhost:${port}`);
 });
+
+// Railway sends SIGTERM on redeploy. Without this the process is killed
+// outright and in-flight requests (a 5-minute AI enhance, say) die with it.
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => {
+    console.log(`${signal} received — finishing in-flight requests…`);
+    server.close(() => process.exit(0));
+    // Don't hang forever if a client keeps the socket open.
+    setTimeout(() => process.exit(0), 15000).unref();
+  });
+}
 
 /* ── Web Image Search (multi-source, high quality) ── */
 
