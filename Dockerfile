@@ -17,9 +17,23 @@ ENV NODE_ENV=production \
 
 # ffmpeg does the trimming and overlay compositing.
 # ca-certificates + wget are needed to fetch yt-dlp and for its TLS calls.
+# unzip is for the deno archive below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg ca-certificates wget \
+      ffmpeg ca-certificates wget unzip \
  && rm -rf /var/lib/apt/lists/*
+
+# ── JavaScript runtime for yt-dlp ──
+# YouTube requires solving a JS challenge to decipher stream URLs. yt-dlp
+# calls extraction without a JS runtime "deprecated", and without one only
+# the android_vr and tv_embedded clients work at all — every web-based
+# client fails with "Requested format is not available". Deno is the runtime
+# yt-dlp enables by default, so installing it unlocks the full client set
+# and the best available formats.
+RUN wget -q https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -O /tmp/deno.zip \
+ && unzip -q /tmp/deno.zip -d /usr/local/bin \
+ && rm /tmp/deno.zip \
+ && chmod +x /usr/local/bin/deno \
+ && /usr/local/bin/deno --version
 
 # YouTube changes its player regularly and a stale yt-dlp is the single most
 # common cause of "download failed" — this pin needs bumping more often than

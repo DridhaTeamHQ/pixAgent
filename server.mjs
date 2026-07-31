@@ -439,10 +439,62 @@ let ytdlpAvailable = false;
   }
 })();
 
-function ytdlpArgs(extra) {
+/* ── YouTube client fallback ──
+   YouTube bot-checks datacenter IPs, which is what any cloud host is. Which
+   "player client" yt-dlp impersonates changes how often that happens, and no
+   single one is reliable — so rather than failing on the first block, try a
+   ladder. Cookies remain the dependable fix, but this clears a good share of
+   requests without them.
+
+   The empty first entry is yt-dlp's own default (currently android_vr-led),
+   which is fastest when it works. android_vr and tv_embedded are the two
+   clients that need no JS challenge, so they still work even if the deno
+   runtime is missing from the image. */
+const YOUTUBE_CLIENT_LADDER = ["", "android_vr", "tv_embedded", "web_safari", "mweb"];
+
+function ytdlpArgs(extra, client = "") {
   const base = ["--no-playlist", "--no-warnings"];
   if (cookieFilePath) base.push("--cookies", cookieFilePath);
+  if (client) base.push("--extractor-args", `youtube:player_client=${client}`);
   return base.concat(extra);
+}
+
+// Only bot-checks and format-availability failures are worth another client;
+// a private or deleted video will fail identically every time, and retrying
+// just burns a minute.
+function worthRetryingWithAnotherClient(stderr) {
+  const low = String(stderr || "").toLowerCase();
+  return low.includes("sign in to confirm")
+      || low.includes("not a bot")
+      || low.includes("requested format is not available")
+      || low.includes("failed to extract")
+      || low.includes("unable to extract");
+}
+
+/**
+ * Run yt-dlp, walking the client ladder while the failure looks like a
+ * block rather than a genuinely missing video. Non-YouTube URLs get one
+ * attempt — the player_client arg means nothing to other extractors.
+ */
+async function runYtdlp(extra, timeoutMs) {
+  const isYouTube = /(?:youtube\.com|youtu\.be)/i.test(extra.join(" "));
+  const ladder = isYouTube ? YOUTUBE_CLIENT_LADDER : [""];
+  let last = null;
+
+  for (const client of ladder) {
+    const r = await run("yt-dlp", ytdlpArgs(extra, client), timeoutMs);
+    if (r.code === 0) {
+      if (client) console.log(`✓ yt-dlp succeeded with player_client=${client}`);
+      return r;
+    }
+    last = r;
+    if (r.timedOut) break;
+    if (!worthRetryingWithAnotherClient(r.stderr || r.stdout)) break;
+    if (client !== ladder[ladder.length - 1]) {
+      console.warn(`⚠ yt-dlp blocked on client "${client || "default"}" — trying the next one`);
+    }
+  }
+  return last;
 }
 
 // Spawn a binary, capture stdout/stderr, enforce a wall-clock timeout.
@@ -502,7 +554,7 @@ async function handleVideoResolve(req, res) {
       return;
     }
 
-    const r = await run("yt-dlp", ytdlpArgs(["--dump-single-json", "--skip-download", url]), RESOLVE_TIMEOUT_MS);
+    const r = await runYtdlp(["--dump-single-json", "--skip-download", url], RESOLVE_TIMEOUT_MS);
     if (r.timedOut) { sendJson(res, 504, { error: "Resolving the video timed out." }); return; }
     if (r.code !== 0) { sendJson(res, 502, { error: friendlyYtdlpError(r.stderr || r.stdout) }); return; }
 
@@ -618,12 +670,12 @@ async function handleVideoClip(req, res) {
       srcPath = files.video.path;
     } else {
       srcPath = join(dir, "source.mp4");
-      const dl = await run("yt-dlp", ytdlpArgs([
+      const dl = await runYtdlp([
         "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
         "--merge-output-format", "mp4",
         "-o", srcPath,
         url,
-      ]), CLIP_TIMEOUT_MS);
+      ], CLIP_TIMEOUT_MS);
       if (dl.timedOut) { sendJson(res, 504, { error: "Downloading the video timed out." }); return; }
       if (dl.code !== 0 || !existsSync(srcPath)) {
         sendJson(res, 502, { error: friendlyYtdlpError(dl.stderr || dl.stdout) });
