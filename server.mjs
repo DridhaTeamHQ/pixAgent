@@ -1,11 +1,11 @@
 import http from "node:http";
 import {
-  createReadStream, createWriteStream, existsSync, mkdirSync,
-  readFileSync, rmSync, statSync, writeFileSync,
+  createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync,
+  readFileSync, renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { tmpdir } from "node:os";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { TwitterApi } from "twitter-api-v2";
 import Busboy from "busboy";
@@ -151,6 +151,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && req.url === "/api/video/resolve") {
     await handleVideoResolve(req, res);
+    return;
+  }
+
+  if (req.method === "GET" && req.url?.startsWith("/api/video/preview?")) {
+    await handleVideoPreview(req, res);
     return;
   }
 
@@ -510,7 +515,9 @@ function worthRetryingWithAnotherClient(stderr) {
       || low.includes("not a bot")
       || low.includes("requested format is not available")
       || low.includes("failed to extract")
-      || low.includes("unable to extract");
+      || low.includes("unable to extract")
+      || low.includes("http error 403")
+      || low.includes("http error 429");
 }
 
 /**
@@ -625,6 +632,148 @@ async function handleVideoResolve(req, res) {
   }
 }
 
+
+/* ── Scrubbable preview for linked videos ──
+   A browser can't play a YouTube/Instagram *page* URL, so a linked video
+   used to show only a poster: you picked trim points blind, against a video
+   you couldn't watch. That makes trimming guesswork.
+
+   So the server fetches a small copy and streams it back same-origin. Kept
+   deliberately low-res — this exists to be scrubbed, not to be the output;
+   the export still downloads full quality separately.
+
+   Direct CDN URLs aren't an option: YouTube's googlevideo links are bound to
+   the IP that requested them (ours, not the viewer's) and Instagram's are
+   CORS-restricted. Proxying is what makes it play at all. */
+
+// Preview doubles as the export source (see handleVideoClip), so this is a
+// real quality knob, not just scrubbing resolution. 720 upscales acceptably
+// to the 1080-wide output and downloads far faster than 4K.
+const PREVIEW_HEIGHT = Number(process.env.VIDEO_QUALITY || 720);
+const PREVIEW_DIR = join(tmpdir(), "pix-preview");
+const PREVIEW_TTL_MS = 60 * 60 * 1000;          // 1 hour
+const PREVIEW_MAX_BYTES = 120 * 1024 * 1024;
+mkdirSync(PREVIEW_DIR, { recursive: true });
+
+// One in-flight download per URL — a <video> element will happily fire
+// several overlapping range requests the moment it gets a src.
+const previewInFlight = new Map();
+
+function previewPathFor(url) {
+  const key = createHash("sha1").update(url).digest("hex").slice(0, 20);
+  return join(PREVIEW_DIR, `${key}.mp4`);
+}
+
+// Evict old previews so /tmp doesn't grow without bound.
+function sweepPreviewCache() {
+  try {
+    for (const name of readdirSync(PREVIEW_DIR)) {
+      const p = join(PREVIEW_DIR, name);
+      try {
+        if (Date.now() - statSync(p).mtimeMs > PREVIEW_TTL_MS) rmSync(p, { force: true });
+      } catch { /* raced with another sweep */ }
+    }
+  } catch { /* dir vanished */ }
+}
+setInterval(sweepPreviewCache, 15 * 60 * 1000).unref();
+
+async function ensurePreviewFile(url) {
+  const dest = previewPathFor(url);
+  if (existsSync(dest) && statSync(dest).size > 1000) return dest;
+  if (previewInFlight.has(dest)) return previewInFlight.get(dest);
+
+  const job = (async () => {
+    // The temp name MUST end in .mp4. yt-dlp derives the merge container
+    // from the output extension, so a ".part" suffix makes a DASH merge
+    // write its result elsewhere and the existence check below fails —
+    // which looked exactly like a download failure while progressive
+    // (single-file) downloads kept working.
+    const tmp = dest.replace(/\.mp4$/, ".downloading.mp4");
+    const r = await runYtdlp([
+      // Order matters: YouTube's progressive (single-file) streams top out at
+      // 360p, so asking for "best single file" quietly gets you 360p. Prefer
+      // the DASH video+audio pair, which is where 720p actually lives, and
+      // fall back to progressive only if the merge isn't possible.
+      "-f", `bv*[ext=mp4][height<=${PREVIEW_HEIGHT}]+ba[ext=m4a]/bv*[height<=${PREVIEW_HEIGHT}]+ba/b[ext=mp4][height<=${PREVIEW_HEIGHT}]/b[ext=mp4]/b`,
+      "--merge-output-format", "mp4",
+      "-o", tmp,
+      url,
+    ], 180_000);
+    if (r.code !== 0 || !existsSync(tmp)) {
+      try { rmSync(tmp, { force: true }); } catch {}
+      throw new Error(friendlyYtdlpError(r.stderr || r.stdout));
+    }
+    if (statSync(tmp).size > PREVIEW_MAX_BYTES) {
+      rmSync(tmp, { force: true });
+      throw new Error("Preview copy is too large.");
+    }
+    renameSync(tmp, dest);
+    return dest;
+  })().finally(() => previewInFlight.delete(dest));
+
+  previewInFlight.set(dest, job);
+  return job;
+}
+
+/**
+ * GET /api/video/preview?u=<encoded page url>
+ * Streams the cached preview copy, honouring Range so the <video> element
+ * can seek. Without range support scrubbing doesn't work at all in Safari.
+ */
+async function handleVideoPreview(req, res) {
+  try {
+    const requestUrl = new URL(req.url, `http://localhost:${port}`);
+    const target = (requestUrl.searchParams.get("u") || "").trim();
+    if (!/^https?:\/\//i.test(target)) {
+      sendJson(res, 400, { error: "A http(s) URL is required." });
+      return;
+    }
+
+    let file;
+    try {
+      file = await ensurePreviewFile(target);
+    } catch (err) {
+      sendJson(res, 502, { error: err.message || "Could not build a preview." });
+      return;
+    }
+
+    const size = statSync(file).size;
+    const range = req.headers.range;
+
+    if (range) {
+      const m = /bytes=(\d*)-(\d*)/.exec(range);
+      let start = m && m[1] ? parseInt(m[1], 10) : 0;
+      let end = m && m[2] ? parseInt(m[2], 10) : size - 1;
+      if (!Number.isFinite(start) || start < 0) start = 0;
+      if (!Number.isFinite(end) || end >= size) end = size - 1;
+      if (start > end) {
+        res.writeHead(416, { "Content-Range": `bytes */${size}` });
+        res.end();
+        return;
+      }
+      res.writeHead(206, {
+        "Content-Type": "video/mp4",
+        "Content-Length": end - start + 1,
+        "Content-Range": `bytes ${start}-${end}/${size}`,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=3600",
+      });
+      createReadStream(file, { start, end }).pipe(res);
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "video/mp4",
+      "Content-Length": size,
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "private, max-age=3600",
+    });
+    createReadStream(file).pipe(res);
+  } catch (error) {
+    if (!res.headersSent) sendJson(res, 500, { error: error.message || "Preview failed." });
+  }
+}
+
 // Stream a multipart body to disk. Buffering a 300 MB upload in memory would
 // put the whole container at risk, so files go straight to /tmp and only the
 // small text fields are kept in memory.
@@ -713,17 +862,27 @@ async function handleVideoClip(req, res) {
       if (files.video.bytes < 1000) { sendJson(res, 400, { error: "Empty or invalid video file." }); return; }
       srcPath = files.video.path;
     } else {
-      srcPath = join(dir, "source.mp4");
-      const dl = await runYtdlp([
-        "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
-        "--merge-output-format", "mp4",
-        "-o", srcPath,
-        url,
-      ], CLIP_TIMEOUT_MS);
-      if (dl.timedOut) { sendJson(res, 504, { error: "Downloading the video timed out." }); return; }
-      if (dl.code !== 0 || !existsSync(srcPath)) {
-        sendJson(res, 502, { error: friendlyYtdlpError(dl.stderr || dl.stdout) });
-        return;
+      // Scrubbing already pulled this exact video down. Re-downloading it
+      // wastes a minute and — because two fetches of the same media in quick
+      // succession look like scraping — reliably earns an HTTP 403 from
+      // YouTube. Reuse the cached copy when it's there.
+      const cached = previewPathFor(url);
+      if (existsSync(cached) && statSync(cached).size > 1000) {
+        srcPath = cached;
+        console.log("✓ clip reusing the cached preview download");
+      } else {
+        srcPath = join(dir, "source.mp4");
+        const dl = await runYtdlp([
+          "-f", `bv*[ext=mp4][height<=${PREVIEW_HEIGHT}]+ba[ext=m4a]/b[ext=mp4][height<=${PREVIEW_HEIGHT}]/b[ext=mp4]/b`,
+          "--merge-output-format", "mp4",
+          "-o", srcPath,
+          url,
+        ], CLIP_TIMEOUT_MS);
+        if (dl.timedOut) { sendJson(res, 504, { error: "Downloading the video timed out." }); return; }
+        if (dl.code !== 0 || !existsSync(srcPath)) {
+          sendJson(res, 502, { error: friendlyYtdlpError(dl.stderr || dl.stdout) });
+          return;
+        }
       }
     }
 

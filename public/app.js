@@ -3485,19 +3485,37 @@ async function fetchVideoFromUrl(url) {
     state.videoMeta = meta;
     state.videoSourceKind = "link";
 
-    // The <video> element cannot play a YouTube page URL, so the on-canvas
-    // preview stays black until export. The trim range still works: it is
-    // driven by the duration yt-dlp reported, not by a decoded stream.
-    if (videoPreviewEl) {
-      videoPreviewEl.removeAttribute("src");
-      videoPreviewEl.load();
-      videoPreviewEl.poster = meta.thumbnail || "";
-    }
     setupTrimRange(meta.duration || 0);
     if (videoEditor) videoEditor.hidden = false;
 
     const len = meta.duration ? ` · ${formatTimecode(meta.duration)}` : "";
-    setVideoStatus(`${meta.title || "Video"}${len}`, "success");
+    setVideoStatus(`${meta.title || "Video"}${len} — loading preview…`);
+
+    // A browser can't play a YouTube/Instagram page URL, so the server
+    // fetches a small copy and streams it back same-origin. Without this the
+    // element shows a poster only and trimming is blind guesswork.
+    if (videoPreviewEl) {
+      videoPreviewEl.poster = meta.thumbnail || "";
+      videoPreviewEl.src = `/api/video/preview?u=${encodeURIComponent(state.videoUrl)}`;
+      videoPreviewEl.addEventListener("loadedmetadata", () => {
+        // yt-dlp's reported duration can disagree slightly with the actual
+        // stream; the decoded value is what the scrubber must match.
+        if (videoPreviewEl.duration && Number.isFinite(videoPreviewEl.duration)) {
+          setupTrimRange(videoPreviewEl.duration);
+        }
+        setVideoStatus(`${meta.title || "Video"}${len}`, "success");
+        renderPoster();
+      }, { once: true });
+      videoPreviewEl.addEventListener("error", () => {
+        // Preview is a convenience — trimming by timecode still works, so
+        // don't tear the editor down, just say so.
+        setVideoStatus(
+          `${meta.title || "Video"}${len} — preview unavailable, trim by time`,
+          "error"
+        );
+      }, { once: true });
+      videoPreviewEl.load();
+    }
   } catch (err) {
     setVideoStatus(err.message, "error");
   } finally {
@@ -3614,7 +3632,7 @@ const trimPlayBtn = document.getElementById("trim-play");
 if (trimPlayBtn) {
   trimPlayBtn.addEventListener("click", () => {
     if (!videoPreviewEl || !videoPreviewEl.src) {
-      setVideoStatus("Range preview needs a local file — linked videos play after export.", "error");
+      setVideoStatus("Load a video first.", "error");
       return;
     }
     videoPreviewEl.currentTime = state.trimStart;
