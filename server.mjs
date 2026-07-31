@@ -2437,18 +2437,30 @@ async function handleGenerateArticle(req, res) {
      2. gpt-image-1 (quality=high, input_fidelity=high) enhances with that
         description embedded so it knows what it must NOT change. */
 
+// This description is embedded in the image-generation prompt, so anything
+// it quotes is at risk of being RENDERED into the photo. It therefore
+// describes where text sits without reproducing the words — enough for the
+// model to know a sign is there and leave it alone, without handing it a
+// string to draw.
 const VISION_PROMPT =
   "You are assisting a photo-restoration pipeline for a news organisation. " +
   "Describe this photograph in 2-4 sentences, factually and precisely: the people " +
-  "(count, apparent age, facial hair, glasses, expressions, clothing), any visible text, " +
-  "logos or signage (quote them exactly), the setting, and the lighting. " +
+  "(count, apparent age, facial hair, glasses, expressions, clothing), the setting, " +
+  "and the lighting. If text, logos or signage appear, say only WHERE they are and " +
+  "how large (for example 'a sponsor banner across the back wall') — do NOT transcribe " +
+  "or quote the words themselves. " +
   "Do NOT guess names. Output only the description.";
 
-function buildEnhancePrompt(description, headline, ratioLabel) {
+// The headline is deliberately NOT given to the image model.
+//
+// Image models treat a quoted string in the prompt as text to RENDER, so
+// `It accompanies this news story: "<headline>"` reliably produced photos
+// with the headline burned into them. The renderer already draws the
+// headline on the canvas — the model never needs to know it.
+function buildEnhancePrompt(description, _headlineNotUsed, ratioLabel) {
   return [
     "Professional photo restoration of a REAL news photograph.",
     description ? `CONTEXT — the photo shows: ${description}` : "",
-    headline ? `It accompanies this news story: "${headline}".` : "",
     "",
     "TASK: upscale and enhance — recover fine detail, increase sharpness,",
     "remove compression artifacts and noise, correct exposure and colour balance.",
@@ -2460,10 +2472,17 @@ function buildEnhancePrompt(description, headline, ratioLabel) {
     "- Every person's face must stay PIXEL-FAITHFUL to the original identity:",
     "  same facial structure, skin texture, wrinkles, expression and age.",
     "  Do NOT beautify, smooth skin, or idealise anyone.",
-    "- Reproduce all text, logos and signage exactly as written.",
+    "- DO NOT ADD ANY TEXT OR GRAPHICS. No headline, caption, title, label,",
+    "  subtitle, watermark, banner, lower-third or logo. Write no words",
+    "  anywhere in the image.",
+    "- Text physically present in the photograph (signage, jerseys, banners",
+    "  held by people) is preserved exactly as it already appears — never",
+    "  invented, completed, translated or extended.",
     "- The original content itself is unchanged — only the surrounding scene",
     "  may be extended to fill the frame. Add no new people or objects of",
     "  interest. This is journalism, not art.",
+    "",
+    "The result is a clean photograph with no added lettering or graphics.",
   ].filter(Boolean).join("\n");
 }
 
