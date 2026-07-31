@@ -1,24 +1,80 @@
 # Deploying Pix Post Builder
 
-## Current architecture
+## Current architecture — everything on Railway
 
-The website runs on **Vercel**. Two things that can't run in a serverless
-function live on **Railway** as separate services:
+Three services in one Railway project:
 
-| Piece | Host | Why |
+| Service | Root Directory | What it is |
 |---|---|---|
-| Website + all `/api/*` routes | Vercel | static + serverless functions |
-| `upscaler/` — AI Enhance | Railway | PyTorch + model weights, minutes-long jobs |
-| `media/` — Slide 2 video | Railway | yt-dlp + ffmpeg (~150 MB), 4.5 MB body cap, long encodes |
+| **app** | `.` | `server.mjs` — static frontend + every `/api/*` route |
+| **upscaler** | `upscaler` | AI Enhance (CodeFormer + Real-ESRGAN) |
+| **media** | `media` | Slide 2 video (yt-dlp + ffmpeg) |
 
-The browser calls the media service **directly** rather than through Vercel:
-serverless request bodies are capped at 4.5 MB and a video upload is routinely
-20–200 MB. `/api/media-token` signs a short-lived HMAC so `MEDIA_SECRET`
-never reaches the client.
+`server.mjs` serves all 11 `/api/*` endpoints plus `/api/scrape` and
+`/api/twitter/post`, so the `api/` folder (Vercel serverless functions) and
+`netlify/functions/` are **no longer used in production** — they are dead
+weight carrying duplicate copies of `EDITORIAL_SYSTEM_PROMPT`, `clampBullet`,
+`repairBullets`, `clampTweet` and `buildEnhancePrompt`. Deleting them is
+safe once Railway is confirmed working; see [Cleanup](#cleanup-after-cutover).
 
-Skip to [Railway — media service](#railway--the-media-service-video) for the
-video setup, or [Railway — whole app](#deploying-the-whole-app-to-railway-alternative)
-for the all-in-one alternative.
+The browser calls the **media** service directly rather than proxying through
+the app — a 20–200 MB video upload should not be buffered through Node twice.
+`/api/media-token` signs a short-lived HMAC so `MEDIA_SECRET` never reaches
+the client.
+
+Jump to [all variables](#all-environment-variables).
+
+## All environment variables
+
+Set these on the **app** service (Root Directory `.`).
+
+| Name | Required? | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | **yes** | article writer, tweet captions, vision |
+| `SHORTLY_AGENT_AUTH_SECRET` | **yes** | Shortly Agents access gate; unset = gate disabled, app open to anyone |
+| `MEDIA_URL` | for video | media service domain, no trailing slash |
+| `MEDIA_SECRET` | for video | must be byte-identical to the media service's |
+| `UPSCALER_URL` | for AI Enhance | upscaler domain; unset = falls back to paid gpt-image |
+| `UPSCALER_SECRET` | for AI Enhance | must match the upscaler service's |
+| `PEXELS_API_KEY` | optional | stock images; unset = that source is skipped |
+| `FAL_KEY` | optional | Flux image generation (last-resort, paid) |
+| `IMAGE_QUALITY` | optional | `medium` (default). low ≈ $0.016, medium ≈ $0.06, high ≈ $0.25 per image |
+| `TWITTER_API_KEY` | optional | only for `/api/twitter/post` |
+| `TWITTER_API_SECRET` | optional | " |
+| `TWITTER_ACCESS_TOKEN` | optional | " |
+| `TWITTER_ACCESS_SECRET` | optional | " |
+
+**Do NOT set `PORT`.** Railway injects it; hard-coding it makes the container
+unreachable behind their proxy.
+
+On the **media** service: `MEDIA_SECRET`, `ALLOWED_ORIGINS`, `YTDLP_COOKIES`.
+On the **upscaler** service: `UPSCALER_SECRET`.
+
+`ALLOWED_ORIGINS` on the media service must be the **app service's Railway
+domain** — that is the origin the browser calls from.
+
+### Verify
+
+```bash
+curl https://YOUR-APP.up.railway.app/health
+```
+
+Returns which integrations actually resolved:
+
+```json
+{"ok":true,"uptime":42,
+ "features":{"openai":true,"upscaler":true,"media":true,"pexels":true}}
+```
+
+Any `false` means that variable is missing or misspelled on the app service.
+
+## Cleanup after cutover
+
+Once `/health` is green and a scrape, an article generation and a video
+export all work, delete `api/`, `netlify/functions/`, `netlify.toml` and
+`vercel.json`. That removes ~2,200 lines of duplicated backend and leaves
+`server.mjs` as the single implementation — otherwise every editorial change
+still has to be applied twice.
 
 ## Repo layout
 
