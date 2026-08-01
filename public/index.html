@@ -320,6 +320,14 @@
                 <button type="button" id="trim-set-end" class="btn-ghost btn-tiny">End here</button>
               </div>
 
+              <h3 class="acc-subtitle">Caption</h3>
+              <textarea id="video-caption" rows="3" placeholder="Text burned into the bottom of the clip..."></textarea>
+              <small class="helper-text">Wrap words in [brackets], (parens), or {braces} to highlight them.</small>
+              <label class="slider-container" style="margin-top:10px;">
+                <span class="slider-label">Size</span>
+                <input type="range" id="video-caption-size" min="24" max="72" step="1" value="40" />
+              </label>
+
               <label class="checkbox-row">
                 <input type="checkbox" id="video-mute" />
                 <span>Mute audio</span>

@@ -237,6 +237,8 @@ const state = {
   trimEnd: 0,
   videoMuted: false,
   videoExporting: false,
+  videoCaption: "",         // burned into the clip, bottom-anchored
+  videoCaptionSize: 40,     // design px at 920×1700; scaled per ratio
   secondLogoImage: null,
   tag: "none",       // "none" | "trending" | "breaking"
   tagImages: {},     // { trending: Image, breaking: Image }
@@ -2012,6 +2014,7 @@ function drawPixVideoScreen() {
   ctx.fillRect(0, 0, W, topFade);
 
   drawFixedLogos();
+  drawVideoCaption();
 
   // Mockup chrome is preview-only — it must never reach the exported file.
   if (!overlayOnly && !state.isDownloading && getLayout().showPreviewBars) {
@@ -2019,6 +2022,123 @@ function drawPixVideoScreen() {
     drawPixPageDots(0.5 * W, 1558 * (H / 1700), s);
     drawNavBar();
   }
+
+  ctx.restore();
+}
+
+/**
+ * Caption burned into the video slide, bottom-anchored like the poster
+ * headline. Supports the same [bracket] / (paren) / {brace} highlight
+ * syntax as the headline, so the two slides look like one system.
+ *
+ * Drawn inside drawPixVideoScreen, which means it lands in BOTH the live
+ * preview and the transparent PNG ffmpeg composites — no server change was
+ * needed to add this.
+ *
+ * Bottom padding matches the headline preset, which is already tuned to sit
+ * above the platform's own UI (the engagement/nav bars the preview mocks up).
+ */
+function drawVideoCaption() {
+  const raw = (state.videoCaption || "").trim();
+  if (!raw) return;
+
+  const W = canvas.width;
+  const H = canvas.height;
+  const L = getLayout();
+  const s = Math.min(W / 920, H / 1700);
+
+  const maxWidth = L.headline.maxWidth;
+  const left = L.headline.x;
+  const fontSize = Math.round((state.videoCaptionSize || 40) * s);
+  const lineHeight = Math.round(fontSize * 1.32);
+  const font = `${PREVIEW_TEXT_WEIGHT} ${fontSize}px ${PREVIEW_TEXT_FONT}`;
+
+  ctx.save();
+  ctx.font = font;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+
+  // Wrap on the visible text — bracket characters are markup, not glyphs, so
+  // measuring with them in would wrap too early.
+  const words = raw.split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, "")).width <= maxWidth || !line) {
+      line = test;
+    } else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+
+  const MAX_LINES = 4;
+  if (lines.length > MAX_LINES) {
+    lines.length = MAX_LINES;
+    lines[MAX_LINES - 1] = `${lines[MAX_LINES - 1].replace(/[\s.,;:]+$/, "")}…`;
+  }
+
+  const blockHeight = lines.length * lineHeight;
+  const top = H - L.headline.bottomPadding * (H / 1700) - blockHeight;
+
+  // Pass 1 — accent boxes behind highlighted runs.
+  let highlighted = false;
+  lines.forEach((text, i) => {
+    const y = top + i * lineHeight;
+    let cursor = left;
+    let segStart = null;
+    let segWidth = 0;
+    const segments = [];
+    const parts = text.split(" ");
+
+    parts.forEach((rawWord, idx) => {
+      const opening = HIGHLIGHT_OPEN_CHAR.test(rawWord);
+      const closing = HIGHLIGHT_CLOSE_CHAR.test(rawWord);
+      const clean = rawWord.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, "");
+      if (opening) highlighted = true;
+
+      const wordWidth = ctx.measureText(clean).width;
+      const advance = wordWidth + ctx.measureText(" ").width;
+
+      if (highlighted && clean.length) {
+        if (segStart === null) segStart = cursor;
+        segWidth += (closing || idx === parts.length - 1) ? wordWidth : advance;
+      }
+      if ((closing || idx === parts.length - 1) && segStart !== null) {
+        segments.push({ x: segStart, w: segWidth });
+        segStart = null;
+        segWidth = 0;
+      }
+      if (closing) highlighted = false;
+      cursor += advance;
+    });
+
+    ctx.fillStyle = state.accent;
+    const padX = fontSize * 0.16;
+    const padY = fontSize * 0.14;
+    segments.forEach(seg => {
+      const r = fontSize * 0.18;
+      const bx = seg.x - padX;
+      const by = y - padY;
+      const bw = seg.w + padX * 2;
+      const bh = fontSize + padY * 2;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, r);
+      else ctx.rect(bx, by, bw, bh);
+      ctx.fill();
+    });
+  });
+
+  // Pass 2 — the words themselves.
+  ctx.fillStyle = "#ffffff";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.55)";
+  ctx.shadowBlur = 16 * s;
+  ctx.shadowOffsetY = 5 * s;
+  lines.forEach((text, i) => {
+    ctx.fillText(text.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, ""), left, top + i * lineHeight);
+  });
 
   ctx.restore();
 }
@@ -3650,6 +3770,25 @@ if (trimPlayBtn) {
 if (videoMuteInput) {
   videoMuteInput.addEventListener("change", () => {
     state.videoMuted = videoMuteInput.checked;
+  });
+}
+
+/* The caption is painted by drawPixVideoScreen, which produces both the
+   live preview and the PNG ffmpeg burns in — so a repaint is all that's
+   needed here, and what you see is exactly what gets exported. */
+const videoCaptionInput = document.getElementById("video-caption");
+if (videoCaptionInput) {
+  videoCaptionInput.addEventListener("input", () => {
+    state.videoCaption = videoCaptionInput.value;
+    if (state.previewMode === "video") renderPoster();
+  });
+}
+
+const videoCaptionSizeInput = document.getElementById("video-caption-size");
+if (videoCaptionSizeInput) {
+  videoCaptionSizeInput.addEventListener("input", () => {
+    state.videoCaptionSize = Number(videoCaptionSizeInput.value) || 40;
+    if (state.previewMode === "video") renderPoster();
   });
 }
 
