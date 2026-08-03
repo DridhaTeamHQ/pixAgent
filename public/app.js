@@ -2059,20 +2059,24 @@ function drawVideoCaption() {
   ctx.textBaseline = "top";
 
   // Wrap on the visible text — bracket characters are markup, not glyphs, so
-  // measuring with them in would wrap too early.
-  const words = raw.split(/\s+/).filter(Boolean);
+  // measuring with them in would wrap too early. Newlines are honoured as
+  // deliberate breaks: each segment wraps on its own.
   const lines = [];
-  let line = "";
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, "")).width <= maxWidth || !line) {
-      line = test;
-    } else {
-      lines.push(line);
-      line = word;
+  for (const segment of raw.replace(/\r\n?/g, "\n").split("\n")) {
+    const words = segment.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) { lines.push(""); continue; }
+    let line = "";
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (!line || ctx.measureText(test.replace(HIGHLIGHT_ANY_CHARS_GLOBAL, "")).width <= maxWidth) {
+        line = test;
+      } else {
+        lines.push(line);
+        line = word;
+      }
     }
+    if (line) lines.push(line);
   }
-  if (line) lines.push(line);
 
   const MAX_LINES = 4;
   if (lines.length > MAX_LINES) {
@@ -2958,10 +2962,9 @@ function drawNavBar() {
 
 function buildHeadlineLayoutFixed(text, maxWidth, size) {
   const cleaned = normalizeHeadlineForPoster(text);
-  const words = cleaned.trim().split(/\s+/).filter(Boolean);
   const font = `600 ${size}px 'Roboto Serif', 'Poppins', serif`;
   ctx.font = font;
-  const lines = wrapWords(words, maxWidth);
+  const lines = wrapTextBlock(cleaned, maxWidth);
   return { font, lines, lineHeight: Math.round(size * 1.1) };
 }
 
@@ -2969,21 +2972,43 @@ function buildHeadlineLayoutFixed(text, maxWidth, size) {
 
 function buildHeadlineLayout(text, maxWidth, _maxLines) {
   const cleaned = normalizeHeadlineForPoster(text);
-  const words = cleaned.trim().split(/\s+/).filter(Boolean);
 
   // Fixed 48px / 600 weight — text grows downward as lines increase
   const size = 48;
   const font = `600 ${size}px 'Roboto Serif', 'Poppins', serif`;
   ctx.font = font;
-  const lines = wrapWords(words, maxWidth);
+  const lines = wrapTextBlock(cleaned, maxWidth);
   return { font, lines, lineHeight: Math.round(size * 1.22) };
 }
 
 function normalizeHeadlineForPoster(text) {
   return text
-    .replace(/\s+/g, " ")
+    // Collapse runs of spaces/tabs but KEEP newlines — pressing Enter is a
+    // deliberate line break, and /\s+/ used to flatten it into a space.
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")        // cap runaway blank runs
     .replace(/^live\s+/i, "")
-    .trim();
+    .split("\n").map(l => l.trim()).join("\n")
+    .replace(/^\n+|\n+$/g, "");
+}
+
+/**
+ * Wrap a block that may contain manual line breaks: each newline-separated
+ * segment is wrapped (and rebalanced) on its own, so an author's break is
+ * always honoured and auto-wrapping never pulls words across it.
+ */
+function wrapTextBlock(text, maxWidth) {
+  const out = [];
+  for (const segment of text.split("\n")) {
+    const words = segment.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      out.push("");                     // a deliberate blank line
+      continue;
+    }
+    out.push(...wrapWords(words, maxWidth));
+  }
+  return out.length ? out : [""];
 }
 
 function wrapWords(words, maxWidth) {
