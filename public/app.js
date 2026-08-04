@@ -240,8 +240,8 @@ const state = {
   videoCaption: "",         // burned into the clip, bottom-anchored
   videoCaptionSize: 40,     // design px at 920×1700; scaled per ratio
   secondLogoImage: null,
-  tag: "none",       // "none" | "trending" | "breaking"
-  tagImages: {},     // { trending: Image, breaking: Image }
+  tag: "none",       // "none" | "trending" | "breaking" | "swipe-video" (+ "-text" variants)
+  tagImages: {},     // { trending: Image, breaking: Image } — SVG-backed tags only
   isDownloading: false,
   forceTextExport: false,
   imageSelectionNonce: 0,
@@ -357,11 +357,30 @@ Object.entries(tagFiles).forEach(([key, src]) => {
   img.onload = () => { state.tagImages[key] = img; renderPoster(); };
 });
 
+/* ── Canvas-drawn tags ──
+   Same 37px bar as the SVG tags above, but painted with ctx so the label uses
+   the Poppins the page already loads instead of needing an outlined SVG. */
+const TAG_BAR_HEIGHT = 37;   // matches the SVG tag assets
+const TAG_PAD_X      = 12;   // side padding around the label
+const TAG_ICON_BOX   = 22;   // the glyph is drawn inside this square
+const TAG_ICON_GAP   = 10;   // space between glyph and label
+const TAG_FONT       = "600 21px 'Poppins', 'Segoe UI', Arial, sans-serif";
+
+// Violet, deliberately clear of the headline accent (#3979FF) so the badge
+// never reads as a highlighted word, and of Trending/Breaking's warm tones.
+const DRAWN_TAGS = {
+  "swipe-video":      { label: "Swipe to Video", bg: "#7C3AED", icon: true },
+  "swipe-video-text": { label: "Swipe to Video", bg: "#7C3AED", icon: false }
+};
+
 // Wait for both Poppins AND Roboto Serif fonts to load before first render
 document.fonts.ready.then(async () => {
-  // Ensure Roboto Serif is loaded for headline rendering
+  // Ensure Roboto Serif is loaded for headline rendering, and Poppins for the
+  // drawn tag badges — their width comes from measureText, so a fallback font
+  // at first paint would size the bar wrong.
   try {
     await document.fonts.load("600 49px 'Roboto Serif'");
+    await document.fonts.load(TAG_FONT);
   } catch (e) { /* font may already be loaded */ }
   await waitForImage(defaultMain);
   await ensureImageFocalPoint(defaultMain);
@@ -2652,23 +2671,88 @@ function drawLogoAt(img, x, y, w, h, { glow = true } = {}) {
 
 function drawTag() {
   if (state.tag === "none") return;
-  const tagImg = state.tagImages[state.tag];
-  if (!tagImg) return;
+
+  const drawn = DRAWN_TAGS[state.tag];
+  const tagImg = drawn ? null : state.tagImages[state.tag];
+  if (!drawn && !tagImg) return;
+
+  const drawW = drawn ? measureDrawnTag(drawn) : (tagImg.naturalWidth || tagImg.width);
+  const drawH = drawn ? TAG_BAR_HEIGHT          : (tagImg.naturalHeight || tagImg.height);
 
   // Tag is anchored to the dynamic headline top, so it always sits just
   // above the headline regardless of how many lines the headline wrapped to.
   const L = getLayout();
-  const drawW = tagImg.naturalWidth || tagImg.width;
-  const drawH = tagImg.naturalHeight || tagImg.height;
   const tagX = L.tag.x;
   const headlineTop = state._render?.top ?? (canvas.height - L.headline.bottomPadding - 200);
   const tagY = headlineTop - drawH - L.tag.gapAboveHeadline;
+
+  if (drawn) {
+    drawTagBadge(drawn, tagX, tagY, drawW, drawH);
+    return;
+  }
 
   ctx.save();
   ctx.shadowColor = "rgba(0,0,0,0.3)";
   ctx.shadowBlur = 12;
   ctx.drawImage(tagImg, tagX, tagY, drawW, drawH);
   ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function measureDrawnTag(tag) {
+  ctx.save();
+  ctx.font = TAG_FONT;
+  const textW = ctx.measureText(tag.label).width;
+  ctx.restore();
+  const iconW = tag.icon ? TAG_ICON_BOX + TAG_ICON_GAP : 0;
+  return Math.round(TAG_PAD_X * 2 + iconW + textW);
+}
+
+function drawTagBadge(tag, x, y, w, h) {
+  // Only the bar carries the drop shadow — the SVG tags shadow the whole
+  // image once, so shadowing the label too would read as a double halo.
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.3)";
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = tag.bg;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = "#FFFFFF";
+  let cursor = x + TAG_PAD_X;
+  if (tag.icon) {
+    drawPlayGlyph(cursor, y + (h - TAG_ICON_BOX) / 2, TAG_ICON_BOX);
+    cursor += TAG_ICON_BOX + TAG_ICON_GAP;
+  }
+  ctx.font = TAG_FONT;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  // +1px optical nudge — Poppins' middle baseline sits slightly high in the bar.
+  ctx.fillText(tag.label, cursor, y + h / 2 + 1);
+  ctx.restore();
+}
+
+/* Rounded play triangle, sized to fit a `box`×`box` square at (x, y). */
+function drawPlayGlyph(x, y, box) {
+  const inset = box * 0.14;
+  const left  = x + inset + box * 0.06;
+  const top   = y + inset;
+  const height = box - inset * 2;
+  const width  = height * 0.88;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(left, top);
+  ctx.lineTo(left + width, top + height / 2);
+  ctx.lineTo(left, top + height);
+  ctx.closePath();
+  // Stroking with the fill colour rounds the triangle's corners.
+  ctx.lineJoin = "round";
+  ctx.lineWidth = box * 0.14;
+  ctx.strokeStyle = ctx.fillStyle;
+  ctx.stroke();
+  ctx.fill();
   ctx.restore();
 }
 
