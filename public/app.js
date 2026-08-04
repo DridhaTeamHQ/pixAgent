@@ -366,11 +366,10 @@ const TAG_ICON_BOX   = 22;   // the glyph is drawn inside this square
 const TAG_ICON_GAP   = 10;   // space between glyph and label
 const TAG_FONT       = "600 21px 'Poppins', 'Segoe UI', Arial, sans-serif";
 
-// Violet, deliberately clear of the headline accent (#3979FF) so the badge
-// never reads as a highlighted word, and of Trending/Breaking's warm tones.
+// Brand blue, matching the headline accent.
 const DRAWN_TAGS = {
-  "swipe-video":      { label: "Swipe to Video", bg: "#7C3AED", icon: true },
-  "swipe-video-text": { label: "Swipe to Video", bg: "#7C3AED", icon: false }
+  "swipe-video":      { label: "Swipe to Video", bg: "#3979FF", icon: true },
+  "swipe-video-text": { label: "Swipe to Video", bg: "#3979FF", icon: false }
 };
 
 // Wait for both Poppins AND Roboto Serif fonts to load before first render
