@@ -2296,3 +2296,29 @@ textarea:focus {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(340%); }
 }
+
+/* Per-bullet character count. The editorial spec is a tight band, so each
+   bullet shows its own length — an average would hide one bad bullet. */
+.article-bullets li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.bullet-count {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border-radius: 100px;
+  background: var(--sunken);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.bullet-count.over {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--red);
+}

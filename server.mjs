@@ -2194,48 +2194,73 @@ async function handleGenerateCaption(req, res) {
 /* ── OpenAI — full article package (headline + 3 bullets + tweet) ──
    Local-dev mirror of api/generate-article.js. Editorial rules live in the
    shared prompt below; keep both copies in sync when editing. */
+/* == Editorial spec ==
+   One place for the numbers that the prompt, the validator, the repair
+   pass and the deterministic clamp all have to agree on. They used to be
+   scattered literals, which is how a spec change silently half-lands. */
+const BULLET_COUNT = 4;
+const BULLET_MIN_CHARS = 115;
+const BULLET_MAX_CHARS = 125;
+// Slack the validator tolerates before paying for a repair round-trip.
+const BULLET_SOFT_MIN = 100;
+const BULLET_SOFT_MAX = 132;
+const HEADLINE_MAX_CHARS = 90;
+
 const EDITORIAL_SYSTEM_PROMPT = [
   "You are a journalist and content writer for Shortly (@SHORTLY__NEWS), a Twitter/X-style news app. Given a source headline and, when available, the article text, produce a news package in STRICT JSON with this exact shape:",
   "",
-  '{ "headline": string, "bullets": [string, string, string], "tweet": string, "flags": [string] }',
+  '{ \"headline\": string, \"bullets\": [string, string, string, string], \"tweet\": string, \"flags\": [string] }',
   "",
-  "SLIDE 1 — the \"headline\" field:",
-  "- Maximum 55 characters.",
-  "- Use VERY SIMPLE, plain, conversational everyday English — the way you would casually tell a friend what happened. Short common words, no jargon, no formal or complex vocabulary.",
-  "- Not punchy, not sensational, not clickbaity, but it should make the reader curious.",
-  "- Clearly and specifically summarise what the story is about. Be specific — name which World Cup, which year, which city, who the person is.",
-  "- Avoid vague phrasing like 'boosts sentiment' or 'makes waves'.",
-  "- Correct sentence capitalisation. No periods between initials (write MS Dhoni, PM, US, UK — never M.S. Dhoni).",
+  "CARD 1 — the \"headline\" field:",
+  "- Witty, informative and curiosity-driven. Engaging and click-worthy.",
+  "- Be SPECIFIC. Never vague or generic. Name the tournament, the year, the city, the amount, the person.",
+  "- Strike the balance between intrigue and clarity: the reader should know what this is about AND want to swipe.",
+  "- Mention the subject EARLY. The brand, person, institution or place appears near the beginning.",
+  "- Use numbers only when they are central to the story (for example $2.4 billion, 20%, 1:778). Do not decorate with numbers that do not carry the story.",
+  "- MATCH THE TONE TO THE STORY:",
+  "  * HARD NEWS (courts, money, deaths, policy, disasters, crime, conflict): straightforward and informative. No wordplay, no wink, no playfulness.",
+  "  * INFOTAINMENT or FEATURE: witty, playful, conversational. The kind of line that makes someone stop scrolling.",
+  "- Avoid vague filler such as 'boosts sentiment', 'makes waves', 'set to change everything'.",
+  `- Maximum ${HEADLINE_MAX_CHARS} characters, so it fits on the poster.`,
+  "- Correct sentence capitalisation. No periods between initials (write MS Dhoni, PM, US, UK, never M.S. Dhoni).",
   "- Never reuse the headline's exact phrasing in the bullets.",
   "",
-  "SLIDE 2 — the \"bullets\" field: EXACTLY 3 bullet points (a context card).",
-  "- Each bullet is NO MORE THAN 80 characters including spaces (aim for 65 to 80). NEVER exceed 80 characters.",
-  "- The three bullets flow naturally and build on each other, in this order: (1) context or background, (2) what happened, (3) another point of view or a value-add.",
-  "- Each bullet is ONE complete sentence — never cut off midway, never trailing off.",
+  `CARD 2 — the \"bullets\" field: EXACTLY ${BULLET_COUNT} bullet points.`,
+  `- Each bullet is between ${BULLET_MIN_CHARS} and ${BULLET_MAX_CHARS} characters INCLUDING SPACES. This is a hard range. Count the characters before you answer.`,
+  "- INVERTED PYRAMID: bullet 1 carries the single most important fact. Each following bullet adds the next most important detail. Background and context come LAST, never first.",
+  "- Simple, conversational language. No jargon. If a term needs explaining, explain it in plain words.",
+  "- Each bullet is ONE complete sentence ending in a full stop. Never cut off midway, never trailing off.",
+  "- Easy to read at a glance. Short common words over long formal ones.",
   "- No em dashes; let sentences flow naturally. No periods between initials (MS Dhoni not M.S. Dhoni).",
   "- Only use a direct quote when quoting verbatim, immediately followed by the person's name; otherwise rephrase in third person.",
-  "- Strictly sourced from the provided material — no extrapolation or outside knowledge.",
-  "- Neutral, professional, British English. Clear, natural language that is both conversational and formal, with no conversational filler.",
+  "- Strictly sourced from the provided material. No extrapolation, no outside knowledge.",
+  "- Neutral, professional, British English.",
   "",
   "TWEET — the \"tweet\" field. Build it in three parts separated by newlines:",
-  "- Part 1: one or two short sentences, maximum 200 characters including the call to action. Professional but Gen Z-friendly tone. Neutral — no political lean, no editorialising. No em dashes.",
+  "- Part 1: one or two short sentences, maximum 200 characters including the call to action. Professional but Gen Z-friendly tone. Neutral, no political lean, no editorialising. No em dashes.",
   "- Part 2 (new line), exactly: Follow @SHORTLY__NEWS for more 👇",
-  "- Part 3 (new line): relevant @handles and #hashtags, ALL in lowercase (e.g. @bcci @icc #indvsaus #t20worldcup). 3 to 6 tags, most specific first, no generic filler like #news or #trending.",
+  "- Part 3 (new line): relevant @handles and #hashtags, ALL in lowercase (for example @bcci @icc #indvsaus #t20worldcup). 3 to 6 tags, most specific first, no generic filler like #news or #trending.",
   "",
   "PEOPLE IDENTIFICATION:",
-  "- On first mention of a person, add a brief identifier — their role, title or what they are known for (e.g. 'Sunil Mittal, chairman of Bharti Enterprises', not just 'Sunil Mittal'). Never assume the audience knows the name.",
+  "- On first mention of a person, add a brief identifier: their role, title or what they are known for (for example 'Sunil Mittal, chairman of Bharti Enterprises', not just 'Sunil Mittal'). Never assume the audience knows the name.",
   "",
   "EDITORIAL RULES:",
   "- Use ONLY the provided material. Never fabricate statistics, records or quotes, and never add outside knowledge.",
   "- If a headline claim is not supported by the article text, if the story is communal, religious, politically sensitive or otherwise unverified, or if it reads as older than yesterday, add a short note to flags. flags is an empty array when there is nothing to raise.",
-  "- Both sides represented on political or contested stories — no one-sided framing.",
+  "- Both sides represented on political or contested stories. No one-sided framing.",
   "- Do not present promotional or sponsored content as news.",
   "- Safe reporting for deaths, suicide and tragedy: no method details, no sensationalising, neutral tone.",
   "",
-  "EXAMPLE bullets (3, each a complete sentence, max 80 chars, context then what-happened then value-add):",
-  '- "Amitabh Bachchan, a top Bollywood actor, has been buying more property lately."',
-  '- "Developer Abhinandan Lodha says Bachchan paid Rs 15 crore for a plot in a day."',
-  '- "The quick deal shows more stars are eyeing Ayodhya\'s fast-growing land market."',
+  "EXAMPLE headline — hard news (straightforward, subject first, the number carries the story):",
+  '- "RBI holds the repo rate at 6.5% for an eighth straight meeting"',
+  "EXAMPLE headline — feature (playful, still specific):",
+  '- "Amitabh Bachchan bought an Ayodhya plot in a single day"',
+  "",
+  `EXAMPLE bullets (${BULLET_COUNT}, inverted pyramid, each a complete sentence of ${BULLET_MIN_CHARS}-${BULLET_MAX_CHARS} characters):`,
+  '- "The Reserve Bank of India has kept its key interest rate at 6.5% for the eighth meeting in a row, holding steady again."',
+  '- "Governor Shaktikanta Das said food prices remain unpredictable, so the bank is not ready to start cutting rates yet."',
+  '- "Home and car loan borrowers will see no change to their monthly payments, with EMIs staying exactly where they are."',
+  '- "The bank has now held rates steady for well over a year, after raising them sharply through 2022 to bring inflation down."',
   "",
   "Output ONLY the JSON object. No prose around it.",
 ].join("\n");
@@ -2262,23 +2287,25 @@ function clampTweet(s) {
   return cut.trim();
 }
 
-// A bullet is "good" when it's a complete sentence in the target band.
+// A bullet is "good" when it is a complete sentence inside the target band.
+// The soft bounds are wider than the spec so a bullet that is only a few
+// characters out is left alone rather than paying for a repair round-trip.
 function bulletIsValid(b) {
   const t = String(b).trim();
-  // Target 80-90; allow a little slack, but flag real overflows/fragments.
-  if (t.length < 50 || t.length > 84) return false;
+  if (t.length < BULLET_SOFT_MIN || t.length > BULLET_SOFT_MAX) return false;
   if (!/[.!?]["')\]]?$/.test(t)) return false;
   const core = t.replace(/[.!?"')\]]+$/, "").trim();
   return !TRAILING_STOPWORDS.test(core);
 }
 
-// Self-repair pass: rewrite overflowing/fragment bullets into complete
-// in-range sentences via gpt-4o-mini. Returns 4 strings or null.
+// Self-repair pass: rewrite out-of-range or fragmentary bullets into
+// complete, in-band sentences via gpt-4o-mini. Returns BULLET_COUNT strings
+// or null.
 async function repairBullets(headline, articleText, bullets) {
   const prompt =
-    "Rewrite these 3 news bullet points so EACH one is a single complete sentence that ends with a full stop and is between 65 and 80 characters long including spaces (never over 80). Keep the same facts and meaning; add no new facts; do not let any sentence trail off. Return STRICT JSON: { \"bullets\": [3 strings] }.\n\n" +
+    `Rewrite these ${BULLET_COUNT} news bullet points so EACH one is a single complete sentence that ends with a full stop and is between ${BULLET_MIN_CHARS} and ${BULLET_MAX_CHARS} characters long including spaces. Count the characters. Keep the same facts, order and meaning; add no new facts; do not let any sentence trail off. Keep the most important fact in the first bullet. Return STRICT JSON: { "bullets": [${BULLET_COUNT} strings] }.\n\n` +
     (headline ? `Headline: ${headline}\n` : "") +
-    (articleText ? `Article: ${articleText.slice(0, 500)}\n` : "") +
+    (articleText ? `Article: ${articleText.slice(0, 700)}\n` : "") +
     "Bullets to fix:\n" + bullets.map((b, i) => `${i + 1}. ${b}`).join("\n");
   try {
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -2289,42 +2316,47 @@ async function repairBullets(headline, articleText, bullets) {
         response_format: { type: "json_object" },
         messages: [{ role: "user", content: prompt }],
         temperature: 0.3,
-        max_tokens: 400,
+        max_tokens: 700,
       }),
     });
     if (!r.ok) return null;
     const data = await r.json();
     const parsed = JSON.parse(data?.choices?.[0]?.message?.content || "{}");
-    const b = Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 3).map((x) => String(x).replace(/\s+/g, " ").trim()) : null;
-    return b && b.length === 3 && b.every(Boolean) ? b : null;
+    const b = Array.isArray(parsed.bullets)
+      ? parsed.bullets.slice(0, BULLET_COUNT).map((x) => String(x).replace(/\s+/g, " ").trim())
+      : null;
+    return b && b.length === BULLET_COUNT && b.every(Boolean) ? b : null;
   } catch {
     return null;
   }
 }
 
-// Keep a bullet ≤105 chars WITHOUT ever cutting mid-sentence or mid-word.
-// Tiny headroom (110) leaves near-target complete sentences intact; beyond
-// that, prefer the longest run of whole sentences that fits, else trim at a
-// word boundary and close with a full stop so it never looks chopped.
 const TRAILING_STOPWORDS = /\s+(and|or|but|to|of|in|on|at|for|with|the|a|an|its|his|her|their|our|your|this|that|these|those|as|by|from|into|onto|over|under|about|after|before|while|amid|is|are|was|were|has|have|had|will|would|which|who|when|where)$/i;
 
+// Last-resort deterministic trim, used only when the model and the repair
+// pass both leave a bullet too long. It never cuts mid-sentence or mid-word:
+// prefer the longest run of whole sentences that fits, else trim at a word
+// boundary, strip any dangling conjunction, and close with a full stop so
+// the result never reads as chopped.
 function clampBullet(s) {
   s = String(s).replace(/\s+/g, " ").trim();
-  if (s.length <= 84) return s;
+  if (s.length <= BULLET_SOFT_MAX) return s;
 
+  // Mask decimal points before splitting, or "6.5%" is treated as a
+  // sentence end and the bullet gets truncated to "...at 6."
   const MASK = String.fromCharCode(0xE000);
   const masked = s.replace(/(\d)\.(\d)/g, `$1${MASK}$2`);
   const sentences = masked.match(/[^.!?]+[.!?]+/g) || [];
   let acc = "";
   for (const sen of sentences) {
-    if ((acc + sen).trim().length <= 82) acc += sen; else break;
+    if ((acc + sen).trim().length <= BULLET_MAX_CHARS) acc += sen; else break;
   }
   acc = acc.split(MASK).join(".").trim();
-  if (acc.length >= 55) return acc;
+  if (acc.length >= BULLET_MIN_CHARS - 25) return acc;
 
-  let cut = s.slice(0, 78);
+  let cut = s.slice(0, BULLET_MAX_CHARS - 2);
   const sp = cut.lastIndexOf(" ");
-  if (sp > 45) cut = cut.slice(0, sp);
+  if (sp > BULLET_MIN_CHARS - 45) cut = cut.slice(0, sp);
   cut = cut.replace(/[\s,;:.\-–—]+$/, "").trim();
   while (TRAILING_STOPWORDS.test(cut)) cut = cut.replace(TRAILING_STOPWORDS, "").trim();
   cut = cut.replace(/[\s,;:.\-–—]+$/, "").trim();
@@ -2400,15 +2432,23 @@ async function handleGenerateArticle(req, res) {
     try { parsed = JSON.parse(data?.choices?.[0]?.message?.content || "{}"); } catch { /* handled below */ }
 
     const out = {
-      headline: (parsed.headline || "").slice(0, 80),
+      headline: (parsed.headline || "").slice(0, HEADLINE_MAX_CHARS),
       // Raw-normalize only (no clamp yet) so the repair pass sees full text.
       bullets: Array.isArray(parsed.bullets)
-        ? parsed.bullets.slice(0, 3).map((x) => String(x).replace(/\s+/g, " ").trim())
+        ? parsed.bullets.slice(0, BULLET_COUNT).map((x) => String(x).replace(/\s+/g, " ").trim())
         : [],
       tweet: clampTweet(parsed.tweet || ""),
       flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
+      // Ship the spec with the payload so the UI can label counts without
+      // keeping its own copy of these numbers in sync.
+      spec: {
+        headlineMax: HEADLINE_MAX_CHARS,
+        bulletCount: BULLET_COUNT,
+        bulletMin: BULLET_MIN_CHARS,
+        bulletMax: BULLET_MAX_CHARS,
+      },
     };
-    if (!out.headline || out.bullets.length < 3 || !out.tweet) {
+    if (!out.headline || out.bullets.length < BULLET_COUNT || !out.tweet) {
       sendJson(res, 502, { error: "AI returned an incomplete package.", raw: parsed });
       return;
     }

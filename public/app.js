@@ -3444,7 +3444,14 @@ if (articleGenerateBtn) {
   });
 }
 
-function renderArticle({ headline, bullets, tweet, flags }) {
+function renderArticle({ headline, bullets, tweet, flags, spec }) {
+  // The editorial spec travels with the payload, so these numbers live in
+  // exactly one place (server.mjs). Fallbacks only matter for a cached
+  // response from an older deploy.
+  const HEADLINE_MAX_CHARS = spec?.headlineMax ?? 90;
+  const BULLET_MIN_CHARS   = spec?.bulletMin   ?? 115;
+  const BULLET_MAX_CHARS   = spec?.bulletMax   ?? 125;
+
   const headEl   = document.getElementById("article-headline");
   const bulletEl = document.getElementById("article-bullets");
   const tweetEl  = document.getElementById("article-tweet");
@@ -3453,13 +3460,26 @@ function renderArticle({ headline, bullets, tweet, flags }) {
 
   headEl.textContent = headline;
   const headCount = document.getElementById("article-headline-count");
-  headCount.textContent = `${headline.length} / 55`;
-  headCount.classList.toggle("over", headline.length > 55);
+  headCount.textContent = `${headline.length} / ${HEADLINE_MAX_CHARS}`;
+  headCount.classList.toggle("over", headline.length > HEADLINE_MAX_CHARS);
 
+  // Per-bullet counts. The spec is a tight character band, so showing the
+  // actual length per bullet is the only way to see at a glance whether the
+  // model hit it — a total or an average would hide one bad bullet.
   bulletEl.innerHTML = "";
   bullets.forEach(b => {
     const li = document.createElement("li");
-    li.textContent = b;
+    const text = document.createElement("span");
+    text.textContent = b;
+    const count = document.createElement("span");
+    count.className = "bullet-count";
+    count.textContent = b.length;
+    const outOfBand = b.length < BULLET_MIN_CHARS || b.length > BULLET_MAX_CHARS;
+    count.classList.toggle("over", outOfBand);
+    count.title = outOfBand
+      ? `${b.length} characters — outside the ${BULLET_MIN_CHARS}-${BULLET_MAX_CHARS} target`
+      : `${b.length} characters`;
+    li.append(text, count);
     bulletEl.appendChild(li);
   });
 
