@@ -448,7 +448,11 @@ p.desc {
   width: min(1380px, 100vw - 40px);
   margin: 22px auto 48px;
   display: grid;
-  grid-template-columns: 290px 250px 1fr;
+  /* Proportional, not two pinned narrow columns beside a greedy preview.
+     The preview holds a row of short cards in a scroller, so handing it
+     every leftover pixel left 260px of dead space while the editing
+     columns stayed cramped at ~245px with 12-row textareas in them. */
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.5fr);
   gap: 16px;
   align-items: start;
 }
@@ -495,7 +499,9 @@ p.desc {
 .preview-panel {
   position: sticky;
   top: calc(var(--nav-height) + 14px);
-  height: calc(100vh - var(--nav-height) - 36px);
+  /* Shrink to the cards rather than filling the viewport. max-height keeps
+     it scrollable if the rail ever grows past the screen. */
+  max-height: calc(100vh - var(--nav-height) - 36px);
   display: flex;
   flex-direction: column;
   padding: 22px;
@@ -1473,7 +1479,10 @@ body.view-article .edit-sheet { display: none !important; }
    preview spans the right side across both rows. */
 @media (max-width: 1100px) {
   .app-shell {
-    grid-template-columns: 270px 1fr;
+    /* Same rebalance as desktop: the left column stacks BOTH the controls
+       and the image panel, so pinning it to 270px while the preview took
+       every remaining pixel was the worst split of the three. */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
     grid-template-rows: auto auto;
     gap: 14px;
   }
@@ -2321,4 +2330,117 @@ textarea:focus {
 .bullet-count.over {
   background: rgba(239, 68, 68, 0.12);
   color: var(--red);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Preview rail — every output visible at once
+   Four cards is past what fits comfortably in a column, so the rail
+   is always a scroller with arrows rather than a grid that squeezes
+   cards below legibility. Scroll-snap keeps a card centred.
+   ═══════════════════════════════════════════════════════════════ */
+
+.preview-rail {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+
+.preview-rail::-webkit-scrollbar { height: 6px; }
+.preview-rail::-webkit-scrollbar-track { background: transparent; }
+.preview-rail::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 100px;
+}
+
+.preview-card {
+  margin: 0;
+  flex: 0 0 clamp(165px, 31%, 215px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  scroll-snap-align: start;
+}
+
+.preview-card-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.preview-card-num,
+.preview-card-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-dim);
+  font-size: 0.66rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.preview-card-glyph { font-size: 0.6rem; }
+
+.preview-rail .canvas-container { padding: 7px; }
+.preview-rail canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.preview-card-dl {
+  width: 100%;
+  padding: 7px 8px;
+  font-size: 0.73rem;
+  justify-content: center;
+}
+
+/* ── Arrows ── */
+.rail-nav { display: inline-flex; gap: 4px; }
+
+.rail-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background: var(--surface-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.rail-arrow:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.rail-arrow:disabled { opacity: 0.3; cursor: default; }
+.rail-arrow[hidden] { display: none; }
+
+.preview-status:empty { display: none; }
+.preview-status { margin-top: 10px; }
+
+@media (max-width: 760px) {
+  .preview-card { flex: 0 0 min(72vw, 260px); }
 }

@@ -190,12 +190,12 @@
       <div class="form-group" id="write-form" hidden>
         <label class="field">
           <span class="field-label">Headline</span>
-          <textarea id="write-headline" rows="3" placeholder="Type your headline..."></textarea>
+          <textarea id="write-headline" rows="4" placeholder="Type your headline..."></textarea>
           <small class="helper-text">Wrap words in [brackets], (parens), or {braces} to highlight them.</small>
         </label>
         <label class="field">
           <span class="field-label">Text Paragraph</span>
-          <textarea id="write-detail" rows="5" placeholder="Write the paragraph for the Text preview..."></textarea>
+          <textarea id="write-detail" rows="10" placeholder="Write the paragraph for the Text preview..."></textarea>
           <small class="helper-text">Used only in the Text preview.</small>
         </label>
         <button type="button" class="btn-primary" id="write-apply-btn">
@@ -248,10 +248,10 @@
             <svg class="acc-chevron" width="14" height="14"><use href="#i-chevron"/></svg>
           </button>
           <div class="acc-body"><div class="acc-inner">
-            <textarea id="headline-edit" placeholder="Edit your headline..."></textarea>
+            <textarea id="headline-edit" rows="4" placeholder="Edit your headline..."></textarea>
             <small class="helper-text">Wrap words in [brackets], (parens), or {braces} to highlight them.</small>
             <h3 class="acc-subtitle">Text Paragraph</h3>
-            <textarea id="detail-edit" rows="6" placeholder="Edit the paragraph shown in Text preview..."></textarea>
+            <textarea id="detail-edit" rows="12" placeholder="Edit the paragraph shown in Text preview..."></textarea>
             <small class="helper-text">This copy appears in the Text preview.</small>
             <h3 class="acc-subtitle">Tag Badge</h3>
             <div class="preset-grid" id="tag-presets">
@@ -323,7 +323,7 @@
               </div>
 
               <h3 class="acc-subtitle">Caption</h3>
-              <textarea id="video-caption" rows="3" placeholder="Text burned into the bottom of the clip..."></textarea>
+              <textarea id="video-caption" rows="4" placeholder="Text burned into the bottom of the clip..."></textarea>
               <small class="helper-text">Wrap words in [brackets], (parens), or {braces} to highlight them.</small>
               <label class="slider-container" style="margin-top:10px;">
                 <span class="slider-label">Size</span>
@@ -478,42 +478,77 @@
 
     </div><!-- /.edit-sheet -->
 
-    <!-- ═══ COL 3: Live Preview ═══ -->
+    <!-- ═══ COL 3: Live Preview — every output at once ═══ -->
     <section class="glass-panel preview-panel">
       <div class="preview-header">
         <span class="preview-title">Live Preview</span>
         <div class="preview-header-actions">
-          <div class="preview-mode-toggle" id="preview-mode-toggle" role="radiogroup" aria-label="Preview mode">
-            <button type="button" class="preview-mode-btn active" data-preview-mode="pix" role="radio" aria-checked="true">Pix</button>
-            <button type="button" class="preview-mode-btn" data-preview-mode="x" role="radio" aria-checked="false">X</button>
-            <button type="button" class="preview-mode-btn" data-preview-mode="text" role="radio" aria-checked="false">Text</button>
-            <button type="button" class="preview-mode-btn" data-preview-mode="video" role="radio" aria-checked="false">Video</button>
+          <div class="rail-nav">
+            <button type="button" class="rail-arrow" id="rail-prev" aria-label="Previous slide">
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.9"
+                      fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button type="button" class="rail-arrow" id="rail-next" aria-label="Next slide">
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.9"
+                      fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
           </div>
           <span class="preview-pixels" id="preview-pixels">920 × 1700</span>
         </div>
       </div>
 
-      <div class="canvas-container">
-        <canvas id="post-canvas" width="920" height="1700" aria-label="Generated Pix news post"></canvas>
+      <!-- Every export is a card with its own download, so no button ever has
+           to guess which slide the user meant — the bug that once made the X
+           export ship the Text image. -->
+      <div class="preview-rail" id="preview-rail">
+
+        <figure class="preview-card" data-preview-mode="pix">
+          <figcaption class="preview-card-label"><span class="preview-card-num">1</span> Poster</figcaption>
+          <div class="canvas-container">
+            <canvas id="post-canvas" width="920" height="1700" aria-label="Slide 1 — poster"></canvas>
+          </div>
+          <button type="button" class="btn-ghost preview-card-dl" data-download="pix">
+            <svg width="13" height="13" aria-hidden="true"><use href="#i-download"/></svg> Download
+          </button>
+        </figure>
+
+        <figure class="preview-card" data-preview-mode="text">
+          <figcaption class="preview-card-label"><span class="preview-card-num">2</span> Text</figcaption>
+          <div class="canvas-container">
+            <canvas id="text-canvas" width="920" height="1700" aria-label="Slide 2 — text card"></canvas>
+          </div>
+          <button type="button" class="btn-ghost preview-card-dl" data-download="text">
+            <svg width="13" height="13" aria-hidden="true"><use href="#i-download"/></svg> Download
+          </button>
+        </figure>
+
+        <figure class="preview-card" data-preview-mode="video">
+          <figcaption class="preview-card-label"><span class="preview-card-num">2</span> Video</figcaption>
+          <div class="canvas-container">
+            <canvas id="video-canvas" width="920" height="1700" aria-label="Slide 2 — video"></canvas>
+          </div>
+          <button type="button" class="btn-ghost preview-card-dl" data-download="video">
+            <svg width="13" height="13" aria-hidden="true"><use href="#i-download"/></svg> Export MP4
+          </button>
+        </figure>
+
+        <figure class="preview-card" data-preview-mode="x">
+          <figcaption class="preview-card-label"><span class="preview-card-glyph">𝕏</span> For X</figcaption>
+          <div class="canvas-container">
+            <canvas id="x-canvas" width="920" height="1700" aria-label="Post image for X"></canvas>
+          </div>
+          <button type="button" class="btn-ghost preview-card-dl" data-download="x">
+            <svg width="13" height="13" aria-hidden="true"><use href="#i-download"/></svg> Download
+          </button>
+        </figure>
+
       </div>
 
-      <!-- Export actions: one primary (poster PNG), two secondary variants. -->
-      <div class="download-wrap" id="action-bar">
-        <button type="button" id="download-btn" class="btn-primary btn-export">
-          <svg width="15" height="15" aria-hidden="true"><use href="#i-download"/></svg>
-          <span id="download-btn-label">Download Poster</span>
-        </button>
-        <div class="export-row">
-          <button type="button" id="x-download-btn" class="btn-ghost">
-            <span class="x-glyph">𝕏</span> For X
-          </button>
-          <button type="button" id="text-download-btn" class="btn-ghost">
-            <svg width="13" height="13" aria-hidden="true"><use href="#i-doc"/></svg>
-            Text
-          </button>
-        </div>
-        <p id="x-download-status" class="status-text" role="status" aria-live="polite"></p>
-      </div>
+      <p id="x-download-status" class="status-text preview-status" role="status" aria-live="polite"></p>
     </section>
 
   </main>

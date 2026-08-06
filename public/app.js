@@ -90,11 +90,14 @@ function renderToHighResCanvas(scale = 2) {
   // Swap the module-level ctx → all draw calls inside renderPoster() now
   // target the offscreen canvas. Restore immediately after.
   const previous = ctx;
+  const prevTargeted = state._targetedRender;
   ctx = exportCtx;
+  state._targetedRender = true;   // paint this one canvas, not all three cards
   try {
     renderPoster();
   } finally {
     ctx = previous;
+    state._targetedRender = prevTargeted;
   }
   return exportCanvas;
 }
@@ -207,6 +210,7 @@ const state = {
   headline: "",
   detailText: "",
   sourceUrl: "",               // article URL from the last scrape (grounds the AI writer)
+  articleText: "",             // full scraped body text — what actually grounds the AI writer
   mainImage: null,
   ready: false,
   imageOffset: { x: 0, y: 0 },
@@ -915,7 +919,10 @@ if (textDownloadButton) textDownloadButton.addEventListener("click", () => {
   downloadTextPreview();
 });
 
-downloadButton.addEventListener("click", async () => {
+// The single "Download Poster" button is gone — each card owns its export
+// now. This block is kept behind a guard so an older markup revision (or a
+// cached page) still works rather than throwing at load.
+if (downloadButton) downloadButton.addEventListener("click", async () => {
   // Clean export (no preview overlays). The export happens entirely on an
   // offscreen canvas via renderExportBlob (8K→6K→4K fallback), so the
   // on-screen preview never changes; we restore state + re-render after.
@@ -1683,6 +1690,11 @@ async function runScrape() {
     // Update state
     state.headline = payload.title || "";
     state.detailText = limitDetailTextClient(payload.detailText || payload.articleText || payload.title || "");
+    // The scrape already extracted the full article body. Keep it: the AI
+    // writer needs it to produce specific bullets, and without it the server
+    // has to re-fetch the URL — a second request that often fails on
+    // paywalled or JS-rendered pages, silently degrading to headline-only.
+    state.articleText = payload.articleText || "";
     state.sourceUrl = payload.sourceUrl || scrapeUrlInput.value.trim();
     state.ready = true;
 
@@ -1715,10 +1727,22 @@ async function runScrape() {
     }
 
     renderPoster();
-    setStatus(`Done! Poster ready — edit below, then download.`, "success");
+    setStatus(`Scraped — writing the article…`, "success");
 
     // Fetch recommended stock images in the background
     fetchStockImages(payload.title, { smartQuery: payload.imageQuery || "" });
+
+    // One action, everything filled: scraping now also writes the headline,
+    // the four points and the tweet, and pushes them into the slides. The
+    // scrape is the moment we have the freshest source text, so this is
+    // where grounding is best.
+    generateArticle({ applyToSlides: true }).then((data) => {
+      setStatus(
+        data ? "Done! Poster and article ready — edit below, then download."
+             : "Poster ready. The article writer failed — open the Article tab to retry.",
+        data ? "success" : "error"
+      );
+    });
   } catch (error) {
     setStatus(error.message || "Unable to scrape that article.", "error");
   } finally {
@@ -1936,7 +1960,51 @@ function computeHeadlineLayoutAndTop() {
   return { layout, top, fontSize, blockHeight, bottomPadding };
 }
 
+/* ── Three cards, one renderer ──
+   The reader swipes a carousel, so the editor shows all three slides at once
+   instead of hiding two behind a mode toggle. Every draw function reads the
+   module-level `ctx` and `canvas`, so each card is painted by pointing `ctx`
+   at that card's canvas and setting the mode — the same swap trick the
+   high-res exporter already uses. No draw function needed changing.
+
+   `state._targetedRender` marks "paint once into the ctx I gave you", which
+   is what the exporter and the per-card painters need; without it a nested
+   renderPoster() would recurse back into painting all three. */
+const PREVIEW_CARDS = [
+  { mode: "pix",   canvas: document.getElementById("post-canvas") },
+  { mode: "text",  canvas: document.getElementById("text-canvas") },
+  { mode: "video", canvas: document.getElementById("video-canvas") },
+  { mode: "x",     canvas: document.getElementById("x-canvas") },
+];
+
+function paintCardInto(target, mode) {
+  if (!target) return;
+  if (target.width !== canvas.width || target.height !== canvas.height) {
+    target.width = canvas.width;
+    target.height = canvas.height;
+  }
+  const prevCtx = ctx;
+  const prevMode = state.previewMode;
+  const prevTargeted = state._targetedRender;
+  ctx = target.getContext("2d");
+  state.previewMode = mode;
+  state._targetedRender = true;
+  try {
+    paintPoster();
+  } finally {
+    ctx = prevCtx;
+    state.previewMode = prevMode;
+    state._targetedRender = prevTargeted;
+  }
+}
+
 function renderPoster() {
+  // Export paths swap ctx themselves and want a single paint.
+  if (state._targetedRender) { paintPoster(); return; }
+  for (const card of PREVIEW_CARDS) paintCardInto(card.canvas, card.mode);
+}
+
+function paintPoster() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
@@ -2183,15 +2251,18 @@ async function renderVideoOverlayPng(width, height) {
 
   const prevCtx = ctx;
   const prevMode = state.previewMode;
+  const prevTargeted = state._targetedRender;
   ctx = outCtx;
   state.videoOverlayExport = true;
   state.previewMode = "video";
+  state._targetedRender = true;
   try {
     drawPixVideoScreen();
   } finally {
     ctx = prevCtx;
     state.videoOverlayExport = false;
     state.previewMode = prevMode;
+    state._targetedRender = prevTargeted;
   }
 
   return new Promise((resolve) => {
@@ -3414,34 +3485,77 @@ function setArticleStatus(msg, kind) {
   articleStatus.textContent = msg || "";
 }
 
+/**
+ * Generate the article package and fill the slides with it.
+ *
+ * `applyToSlides` is what closes the loop that used to be missing: the writer
+ * produced a headline and bullets that only ever landed in the Article tab and
+ * the clipboard, so the poster still showed the raw scraped title and the Text
+ * slide still showed the raw scraped paragraph. Now one action fills both.
+ */
+async function generateArticle({ applyToSlides = false } = {}) {
+  const headline = (state.headline || "").trim();
+  if (!headline) {
+    setArticleStatus("No story yet — scrape a link or write a headline first.", "error");
+    return null;
+  }
+
+  if (articleGenerateBtn) articleGenerateBtn.disabled = true;
+  setArticleStatus("Writing headline, bullets and tweet…");
+
+  try {
+    const resp = await fetch("/api/generate-article", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        headline,
+        sourceUrl: state.sourceUrl || "",
+        // Pass the text we already scraped so the server does not re-fetch.
+        articleText: state.articleText || state.detailText || "",
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+
+    renderArticle(data);
+
+    if (applyToSlides) {
+      if (data.headline) {
+        state.headline = data.headline;
+        if (headlineEdit) headlineEdit.value = data.headline;
+        if (writeHeadline) writeHeadline.value = data.headline;
+      }
+      if (Array.isArray(data.bullets) && data.bullets.length) {
+        // Bulleted, one per line — drawPixTextScreen already renders a
+        // bullet glyph for lines starting with a dash.
+        const block = data.bullets.map((b) => `- ${b}`).join("\n");
+        state.detailText = limitDetailTextClient(block);
+        if (detailEdit) detailEdit.value = state.detailText;
+        if (writeDetail) writeDetail.value = state.detailText;
+      }
+      renderPoster();
+    }
+
+    // Thin sources produce thin bullets; say so rather than let it look
+    // like the writer underperformed.
+    const thin = data.sourceChars !== undefined && data.sourceChars < 200;
+    setArticleStatus(
+      thin
+        ? "✓ Done — but little source text was found, so the points are general. Check the article link."
+        : "✓ Done — review before publishing.",
+      thin ? "error" : "success"
+    );
+    return data;
+  } catch (err) {
+    setArticleStatus(`Generation failed: ${err.message}`, "error");
+    return null;
+  } finally {
+    if (articleGenerateBtn) articleGenerateBtn.disabled = false;
+  }
+}
+
 if (articleGenerateBtn) {
-  articleGenerateBtn.addEventListener("click", async () => {
-    const headline = (state.headline || "").trim();
-    if (!headline) {
-      setArticleStatus("No story yet — build a poster first (Poster tab).", "error");
-      return;
-    }
-
-    articleGenerateBtn.disabled = true;
-    setArticleStatus("Writing headline, bullets and tweet…");
-
-    try {
-      const resp = await fetch("/api/generate-article", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ headline, sourceUrl: state.sourceUrl || "" }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
-
-      renderArticle(data);
-      setArticleStatus("✓ Done — review before publishing.", "success");
-    } catch (err) {
-      setArticleStatus(`Generation failed: ${err.message}`, "error");
-    } finally {
-      articleGenerateBtn.disabled = false;
-    }
-  });
+  articleGenerateBtn.addEventListener("click", () => generateArticle({ applyToSlides: true }));
 }
 
 function renderArticle({ headline, bullets, tweet, flags, spec }) {
@@ -4060,3 +4174,127 @@ if (videoPreviewEl) {
 }
 
 syncTrimUI();
+
+/* ── Per-card downloads ──
+   Each preview card owns its own export. Previously one button exported
+   "whatever mode the toggle happened to be in", which is how the X download
+   once shipped the Text slide — the mode was ambient state rather than
+   something the action declared. Here the button names its slide. */
+
+async function downloadSlide(mode) {
+  const prev = {
+    mode: state.previewMode,
+    downloading: state.isDownloading,
+    forceText: state.forceTextExport,
+    shortly: state.useShortlyLogo,
+  };
+  state.isDownloading = true;
+  state.previewMode = mode;
+  state.forceTextExport = mode === "text";
+  state.useShortlyLogo = false;
+
+  let result = null;
+  try {
+    result = await renderExportBlob();
+  } catch (err) {
+    console.error(`${mode} export failed:`, err);
+  } finally {
+    state.isDownloading = prev.downloading;
+    state.previewMode = prev.mode;
+    state.forceTextExport = prev.forceText;
+    state.useShortlyLogo = prev.shortly;
+    renderPoster();
+  }
+  if (!result) return null;
+
+  const suffix = mode === "pix" ? "" : `-${mode}`;
+  const url = URL.createObjectURL(result.blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${slugify(state.headline || "pix-post")}${suffix}.png`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return result;
+}
+
+const previewRail = document.getElementById("preview-rail");
+if (previewRail) {
+  previewRail.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-download]");
+    if (!btn) return;
+    const mode = btn.dataset.download;
+
+    // X has its own export path: 2x scale (X rejects PNGs over 5 MB),
+    // cropped to content, Shortly logo instead of Pix.
+    if (mode === "x") {
+      downloadXPreview();
+      return;
+    }
+
+    // The video slide is an MP4 from the server, not a canvas PNG.
+    if (mode === "video") {
+      if (!state.videoUrl && !state.videoFile) {
+        setStatus("Add a video in Slide 2 Video first.", "error");
+        return;
+      }
+      exportVideoClip();
+      return;
+    }
+
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = "Rendering…";
+    try {
+      const r = await downloadSlide(mode);
+      setStatus(r ? `Slide downloaded (${r.width}×${r.height}).` : "Export failed.", r ? "success" : "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  });
+}
+
+
+/* ── Rail navigation ──
+   Arrows page the carousel by one card. They hide themselves when everything
+   already fits, so on a wide screen the header stays clean instead of
+   carrying two controls that do nothing. */
+(() => {
+  const rail = document.getElementById("preview-rail");
+  const prev = document.getElementById("rail-prev");
+  const next = document.getElementById("rail-next");
+  if (!rail || !prev || !next) return;
+
+  const step = () => {
+    const card = rail.querySelector(".preview-card");
+    // Card width plus the gap, so one press moves exactly one card.
+    const gap = parseFloat(getComputedStyle(rail).columnGap || getComputedStyle(rail).gap || "14") || 14;
+    return card ? card.getBoundingClientRect().width + gap : rail.clientWidth * 0.8;
+  };
+
+  const scrollable = () => rail.scrollWidth - rail.clientWidth > 4;
+
+  function sync() {
+    const on = scrollable();
+    prev.hidden = next.hidden = !on;
+    if (!on) return;
+    // Disable rather than hide at the ends — a control that vanishes
+    // mid-interaction makes the row jump.
+    prev.disabled = rail.scrollLeft <= 2;
+    next.disabled = rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 2;
+  }
+
+  prev.addEventListener("click", () => rail.scrollBy({ left: -step(), behavior: "smooth" }));
+  next.addEventListener("click", () => rail.scrollBy({ left:  step(), behavior: "smooth" }));
+  rail.addEventListener("scroll", sync, { passive: true });
+  window.addEventListener("resize", sync);
+  // The cards resize when the aspect ratio changes, which changes whether the
+  // rail overflows at all.
+  if (window.ResizeObserver) new ResizeObserver(sync).observe(rail);
+
+  // Layout is not settled when this module runs, so the first sync would read
+  // scrollWidth === clientWidth and leave the arrows in the wrong state.
+  sync();
+  requestAnimationFrame(sync);
+  window.addEventListener("load", sync);
+})();

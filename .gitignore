@@ -5,3 +5,4 @@ output/
 .chrome-profile/
 local.secrets.json
 .env
+.bin/

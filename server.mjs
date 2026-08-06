@@ -9,6 +9,9 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { spawn } from "node:child_process";
 import { TwitterApi } from "twitter-api-v2";
 import Busboy from "busboy";
+import {
+  suggestRegister, registerRules, assessTone, rectifyInstruction,
+} from "./lib/editorial-tone.js";
 
 const root = join(process.cwd(), "public");
 const port = Number(process.env.PORT || 3000);
@@ -429,6 +432,26 @@ if (cookieFilePath) {
 
 // Probe the two binaries once at startup so /health can report a misbuilt
 // image directly, instead of every export failing with a confusing ENOENT.
+/* yt-dlp needs a JavaScript runtime to solve YouTube's challenge. The Docker
+   image puts deno on PATH; locally it is more polite to keep a copy in
+   ./.bin than to modify the developer's PATH, so point yt-dlp at it
+   explicitly when that copy exists. Without a runtime, the web-based player
+   clients fail outright and cookies make extraction worse rather than
+   better. */
+const LOCAL_DENO = (() => {
+  for (const name of ["deno.exe", "deno"]) {
+    const p = join(process.cwd(), ".bin", name);
+    if (existsSync(p)) return p;
+  }
+  return "";
+})();
+if (LOCAL_DENO) console.log("✓ using local deno at .bin");
+
+// Declared BEFORE the availability probe below: that probe runs during
+// module evaluation, so a const declared further down is still in its
+// temporal dead zone when the probe reads it. The throw happened inside
+// an async IIFE, so it surfaced as a late unhandled rejection rather than
+// a clean startup error, which made it look unrelated to this line.
 let ffmpegAvailable = false;
 let ytdlpAvailable = false;
 let jsRuntimeAvailable = false;
@@ -436,7 +459,7 @@ let jsRuntimeAvailable = false;
   const [ff, yt, deno] = await Promise.all([
     run("ffmpeg", ["-version"], 10_000),
     run("yt-dlp", ["--version"], 10_000),
-    run("deno", ["--version"], 10_000),
+    run(LOCAL_DENO || "deno", ["--version"], 10_000),
   ]);
   ffmpegAvailable = ff.code === 0;
   ytdlpAvailable = yt.code === 0;
@@ -498,8 +521,10 @@ if (ytdlpProxy) {
   console.log(`✓ yt-dlp proxy enabled (${host})`);
 }
 
+
 function ytdlpArgs(extra, client = "") {
   const base = ["--no-playlist", "--no-warnings"];
+  if (LOCAL_DENO) base.push("--js-runtimes", `deno:${LOCAL_DENO}`);
   if (ytdlpProxy) base.push("--proxy", ytdlpProxy);
   if (cookieFilePath) base.push("--cookies", cookieFilePath);
   if (client) base.push("--extractor-args", `youtube:player_client=${client}`);
@@ -2202,14 +2227,24 @@ const BULLET_COUNT = 4;
 const BULLET_MIN_CHARS = 115;
 const BULLET_MAX_CHARS = 125;
 // Slack the validator tolerates before paying for a repair round-trip.
-const BULLET_SOFT_MIN = 100;
+// The floor sits close to the target because the model systematically
+// UNDERSHOOTS: measured output landed at 90-111 against a 115-125 spec, and
+// a floor of 100 let most of that through untouched.
+const BULLET_SOFT_MIN = 110;
 const BULLET_SOFT_MAX = 132;
+// Character counts are something an LLM cannot actually measure, so the
+// prompt also states a word target, which models track far more reliably.
+// English news prose averages ~6.2 characters per word including the space.
+const BULLET_MIN_WORDS = Math.round(BULLET_MIN_CHARS / 6.2);
+const BULLET_MAX_WORDS = Math.round(BULLET_MAX_CHARS / 6.0);
 const HEADLINE_MAX_CHARS = 90;
 
+// The base prompt is register-agnostic; buildEditorialPrompt() appends the
+// register-specific rules chosen per story.
 const EDITORIAL_SYSTEM_PROMPT = [
   "You are a journalist and content writer for Shortly (@SHORTLY__NEWS), a Twitter/X-style news app. Given a source headline and, when available, the article text, produce a news package in STRICT JSON with this exact shape:",
   "",
-  '{ \"headline\": string, \"bullets\": [string, string, string, string], \"tweet\": string, \"flags\": [string] }',
+  '{ \"headline\": string, \"bullets\": [string, string, string, string], \"tweet\": string, \"register\": string, \"flags\": [string] }',
   "",
   "CARD 1 — the \"headline\" field:",
   "- Witty, informative and curiosity-driven. Engaging and click-worthy.",
@@ -2226,11 +2261,19 @@ const EDITORIAL_SYSTEM_PROMPT = [
   "- Never reuse the headline's exact phrasing in the bullets.",
   "",
   `CARD 2 — the \"bullets\" field: EXACTLY ${BULLET_COUNT} bullet points.`,
-  `- Each bullet is between ${BULLET_MIN_CHARS} and ${BULLET_MAX_CHARS} characters INCLUDING SPACES. This is a hard range. Count the characters before you answer.`,
+  `- LENGTH: each bullet must be ${BULLET_MIN_WORDS} to ${BULLET_MAX_WORDS} words (${BULLET_MIN_CHARS}-${BULLET_MAX_CHARS} characters). Count the WORDS. A bullet of ${BULLET_MIN_WORDS - 4} words is too short and must be developed with more of the source detail, not padded with filler.`,
   "- INVERTED PYRAMID: bullet 1 carries the single most important fact. Each following bullet adds the next most important detail. Background and context come LAST, never first.",
-  "- Simple, conversational language. No jargon. If a term needs explaining, explain it in plain words.",
+  "- EVERY BULLET MUST CARRY A FACT THE OTHERS DO NOT — a different figure, name, date, place, cause, consequence or reaction. Four bullets restating one fact in different words is a failure even if each sentence is well written.",
+  "- Prefer concrete detail from the source over summary: the amount, the deadline, the vote, the sample size, the institution, the date. If the source gives a number, a bullet should carry it.",
+  "- Do NOT end every bullet with an attribution tag. Attribute where a claim genuinely needs a source, usually one or two bullets; state the rest as fact. Four 'researchers said' endings read as a template, not as reporting.",
+  "- At most ONE hedge per sentence. 'Studies indicate that X may improve Y' hedges twice and commits to nothing. Write what was actually found.",
+  "- Never pad to reach the length. If the source does not support four distinct bullets, write the most specific ones you can from what is there rather than repeating yourself.",
+  "- PLAIN IS NOT SIMPLISTIC. Short sentences and precise, ordinary words — the register of a wire-service report, not of a childrens book. Never pad, never talk down, never explain the obvious.",
+  "- Use the correct term rather than a vague substitute. If a term genuinely needs unpacking, gloss it in a short clause instead of replacing it.",
   "- Each bullet is ONE complete sentence ending in a full stop. Never cut off midway, never trailing off.",
-  "- Easy to read at a glance. Short common words over long formal ones.",
+  "- Attribute anything contested, forward-looking or opinionated to a named person, body or document, using the verb 'said'. Never 'claimed', 'admitted', 'conceded' or 'slammed' — those read as judgemental.",
+  "- Active voice with strong verbs. Exact figures, dates and titles wherever the source has them; never 'a lot of', 'several' or 'recently' in their place.",
+  "- No judgement adjectives (shocking, stunning, massive, historic). No exclamation marks. Third person throughout — never address the reader as 'you'.",
   "- No em dashes; let sentences flow naturally. No periods between initials (MS Dhoni not M.S. Dhoni).",
   "- Only use a direct quote when quoting verbatim, immediately followed by the person's name; otherwise rephrase in third person.",
   "- Strictly sourced from the provided material. No extrapolation, no outside knowledge.",
@@ -2265,6 +2308,22 @@ const EDITORIAL_SYSTEM_PROMPT = [
   "Output ONLY the JSON object. No prose around it.",
 ].join("\n");
 
+/**
+ * Compose the system prompt for one story: the shared editorial spec plus the
+ * register-specific rules for THIS story's type. A single fixed tone
+ * instruction is what produced summaries that read as written for a child —
+ * a court ruling and a film premiere need different registers, not the same
+ * flattened one.
+ */
+function buildEditorialPrompt(register) {
+  return EDITORIAL_SYSTEM_PROMPT +
+    "\n\n" + registerRules(register) +
+    "\n\nSet the \"register\" field in your JSON to the register you actually wrote in: " +
+    "\"wire\" for hard news, \"feature\" for infotainment, \"explainer\" for technical stories. " +
+    "Override the suggested register if the story is plainly a different type.";
+}
+
+
 // Spec: every @handle/#hashtag after the CTA line is lowercase. The model
 // occasionally keeps official casing (@RBI) — enforce deterministically.
 function lowercaseTagLines(tweet) {
@@ -2298,15 +2357,33 @@ function bulletIsValid(b) {
   return !TRAILING_STOPWORDS.test(core);
 }
 
-// Self-repair pass: rewrite out-of-range or fragmentary bullets into
-// complete, in-band sentences via gpt-4o-mini. Returns BULLET_COUNT strings
-// or null.
-async function repairBullets(headline, articleText, bullets) {
+const REGISTER_KEYS = ["wire", "feature", "explainer"];
+
+/**
+ * Rectification pass. Rewrites bullets that failed either the length check or
+ * the tone check, told exactly which faults to fix and which register to
+ * write in.
+ *
+ * Naming the specific faults matters: "make it more professional" is the kind
+ * of instruction that makes a model rewrite everything and drift off the
+ * facts. A list of concrete defects keeps the edit surgical.
+ */
+async function rectifyBullets({ headline, articleText, bullets, register, issues }) {
+  const instruction = rectifyInstruction({
+    issues,
+    register,
+    min: BULLET_MIN_CHARS,
+    max: BULLET_MAX_CHARS,
+    count: BULLET_COUNT,
+    minWords: BULLET_MIN_WORDS,
+    maxWords: BULLET_MAX_WORDS,
+  });
   const prompt =
-    `Rewrite these ${BULLET_COUNT} news bullet points so EACH one is a single complete sentence that ends with a full stop and is between ${BULLET_MIN_CHARS} and ${BULLET_MAX_CHARS} characters long including spaces. Count the characters. Keep the same facts, order and meaning; add no new facts; do not let any sentence trail off. Keep the most important fact in the first bullet. Return STRICT JSON: { "bullets": [${BULLET_COUNT} strings] }.\n\n` +
+    instruction + "\n\n" +
     (headline ? `Headline: ${headline}\n` : "") +
-    (articleText ? `Article: ${articleText.slice(0, 700)}\n` : "") +
-    "Bullets to fix:\n" + bullets.map((b, i) => `${i + 1}. ${b}`).join("\n");
+    (articleText ? `Source article: ${articleText.slice(0, 900)}\n` : "") +
+    "Bullets to rewrite:\n" + bullets.map((b, i) => `${i + 1}. ${b}`).join("\n");
+
   try {
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -2315,8 +2392,9 @@ async function repairBullets(headline, articleText, bullets) {
         model: "gpt-4o-mini",
         response_format: { type: "json_object" },
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.3,
-        max_tokens: 700,
+        // Low temperature: this is a correction, not a fresh draft.
+        temperature: 0.25,
+        max_tokens: 800,
       }),
     });
     if (!r.ok) return null;
@@ -2331,7 +2409,7 @@ async function repairBullets(headline, articleText, bullets) {
   }
 }
 
-const TRAILING_STOPWORDS = /\s+(and|or|but|to|of|in|on|at|for|with|the|a|an|its|his|her|their|our|your|this|that|these|those|as|by|from|into|onto|over|under|about|after|before|while|amid|is|are|was|were|has|have|had|will|would|which|who|when|where)$/i;
+const TRAILING_STOPWORDS = /\s+(and|or|but|to|of|in|on|at|for|with|the|a|an|its|his|her|their|our|your|this|that|these|those|as|by|from|into|onto|over|under|about|after|before|while|amid|is|are|was|were|has|have|had|will|would|which|who|when|where|during|through|throughout|across|among|amongst|between|against|within|without|since|until|till|unless|though|although|because|per|via|upon|toward|towards|despite|beyond|near|off|out|up|down|than|then|so|yet|nor|if|nearly|almost|only|just|also|both|either|neither|whether|following|include|including)$/i;
 
 // Last-resort deterministic trim, used only when the model and the repair
 // pass both leave a bullet too long. It never cuts mid-sentence or mid-word:
@@ -2340,7 +2418,11 @@ const TRAILING_STOPWORDS = /\s+(and|or|but|to|of|in|on|at|for|with|the|a|an|its|
 // the result never reads as chopped.
 function clampBullet(s) {
   s = String(s).replace(/\s+/g, " ").trim();
-  if (s.length <= BULLET_SOFT_MAX) return s;
+  // Trim to the SPEC ceiling, not the tolerance ceiling. The soft bound
+  // exists to decide whether a repair call is worth paying for; it should
+  // not leak into the output, or every bullet between the spec max and the
+  // tolerance shows red in the UI having never been touched.
+  if (s.length <= BULLET_MAX_CHARS) return s;
 
   // Mask decimal points before splitting, or "6.5%" is treated as a
   // sentence end and the bullet gets truncated to "...at 6."
@@ -2378,9 +2460,15 @@ async function handleGenerateArticle(req, res) {
       return;
     }
 
-    // Ground the model with the actual article text when we have a URL.
-    let articleText = "";
-    if (sourceUrl) {
+    // Grounding is everything here. Without source text the model has only a
+    // headline to work from, and it fills four bullets by restating that
+    // headline behind hedges — which is exactly what "over-simplified" output
+    // turns out to be. So prefer text the client already scraped, and only
+    // re-fetch as a fallback.
+    let articleText = String(body?.articleText || "").trim().slice(0, 6000);
+    let grounding = articleText ? "client" : "none";
+
+    if (!articleText && sourceUrl) {
       try {
         const r = await fetch(sourceUrl, { headers: { "user-agent": USER_AGENT } });
         if (r.ok) {
@@ -2394,7 +2482,14 @@ async function handleGenerateArticle(req, res) {
             .slice(0, 10)
             .join("\n");
         }
+        if (articleText) grounding = "refetch";
       } catch { /* grounding is best-effort */ }
+    }
+
+    if (grounding === "none") {
+      console.warn("\u26a0 generate-article has NO source text — bullets will be thin. Headline:", headline.slice(0, 60));
+    } else {
+      console.log(`\u2713 grounded via ${grounding} (${articleText.length} chars)`);
     }
 
     const userContent = articleText
@@ -2402,6 +2497,10 @@ async function handleGenerateArticle(req, res) {
       : `Source headline:\n${headline}\n\n(No article text available — write from the headline only and flag that facts could not be verified against source text.)`;
 
     const t0 = Date.now();
+    // Pick a register from the source before generating. This is only a hint —
+    // the model returns the register it actually used and that value wins.
+    const suggestedRegister = suggestRegister(headline, articleText);
+
     const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -2412,7 +2511,7 @@ async function handleGenerateArticle(req, res) {
         model: "gpt-4o-mini",
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: EDITORIAL_SYSTEM_PROMPT },
+          { role: "system", content: buildEditorialPrompt(suggestedRegister) },
           { role: "user", content: userContent },
         ],
         temperature: 0.6,
@@ -2441,6 +2540,10 @@ async function handleGenerateArticle(req, res) {
       flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
       // Ship the spec with the payload so the UI can label counts without
       // keeping its own copy of these numbers in sync.
+      // Surfaced so thin bullets are explainable rather than mysterious: if
+      // sourceChars is 0 the model wrote from the headline alone.
+      grounding,
+      sourceChars: articleText.length,
       spec: {
         headlineMax: HEADLINE_MAX_CHARS,
         bulletCount: BULLET_COUNT,
@@ -2453,14 +2556,40 @@ async function handleGenerateArticle(req, res) {
       return;
     }
 
-    // Self-repair any bullet that overflows or reads as a fragment, then clamp.
-    if (out.bullets.some((b) => !bulletIsValid(b))) {
-      const repaired = await repairBullets(headline, articleText, out.bullets);
-      if (repaired) {
-        console.log("✓ bullets self-repaired");
-        out.bullets = repaired;
+    // The model reports the register it wrote in; fall back to our guess.
+    const register = REGISTER_KEYS.includes(parsed.register) ? parsed.register : suggestedRegister;
+    out.register = register;
+
+    // Two independent failure modes, so two checks:
+    //   length  — bullets outside the character band or reading as fragments
+    //   tone    — writing that talks down, hedges, or drops attribution
+    // The tone check is deterministic and free, so it costs nothing to run on
+    // every request and only spends a model call when something is wrong.
+    const lengthBad = out.bullets.some((b) => !bulletIsValid(b));
+    const tone = assessTone(out.bullets, { register, sourceText: articleText || headline });
+
+    if (lengthBad || !tone.ok) {
+      if (!tone.ok) console.log(`⚠ tone (${register}):`, tone.issues.join(" | "));
+      const issues = tone.issues.slice();
+      if (lengthBad) {
+        issues.push(`Some bullets are outside the ${BULLET_MIN_CHARS}-${BULLET_MAX_CHARS} character range or do not end as complete sentences.`);
       }
+      const repaired = await rectifyBullets({
+        headline, articleText, bullets: out.bullets, register, issues,
+      });
+      if (repaired) {
+        const after = assessTone(repaired, { register, sourceText: articleText || headline });
+        console.log(`✓ bullets rectified (${register})${after.ok ? "" : " — residual: " + after.issues.join(" | ")}`);
+        out.bullets = repaired;
+        out.toneIssues = after.ok ? [] : after.issues;
+      } else {
+        // Rectification failed; surface what we found rather than pretending.
+        out.toneIssues = tone.issues;
+      }
+    } else {
+      out.toneIssues = [];
     }
+
     out.bullets = out.bullets.map(clampBullet);
 
     console.log(`✓ AI article (${Date.now() - t0}ms): "${out.headline}"`);
