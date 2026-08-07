@@ -2034,6 +2034,7 @@ function paintPoster() {
   drawHero();
   drawTag();
   drawHeadline();
+  drawHeadlineTimestamp();
 
   // Preview-only UI elements (not included in download).
   // Only the 9:16 preset shows the Reels-style engagement + nav bars; on
@@ -2355,7 +2356,6 @@ function drawPixTextScreen() {
   const bottomTextPadding = state.forceTextExport ? L.headline.bottomPadding : 335;
   const lastLineY = H - bottomTextPadding * (H / 1700);
   drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, L.headline.maxWidth, lastLineY, 39 * s, 61 * s);
-  drawTimestamp(textX, lastLineY + 39 * s, s);
 
   if (!state.forceTextExport) {
     drawEngagementBar();
@@ -2391,6 +2391,24 @@ function formatCreatedAt(date) {
   hours = hours % 12 || 12;
   const mins = String(d.getMinutes()).padStart(2, "0");
   return `${day} ${month} | ${hours}:${mins} ${meridiem}`;
+}
+
+/**
+ * Place the stamp directly beneath the poster headline.
+ *
+ * The headline is bottom-anchored and its block height changes with the line
+ * count, so the position is derived from the cached layout rather than a
+ * fixed y — otherwise a two-line headline would leave a gap and a four-line
+ * one would collide.
+ */
+function drawHeadlineTimestamp() {
+  if (!state.showTimestamp) return;
+  const L = getLayout();
+  const cached = state._render || computeHeadlineLayoutAndTop();
+  const s = Math.min(canvas.width / 920, canvas.height / 1700);
+  // Sit just under the last headline line, left edge shared with it.
+  const y = cached.top + cached.blockHeight + Math.round(14 * s);
+  drawTimestamp(L.headline.x, y, s);
 }
 
 function drawTimestamp(x, y, s) {
