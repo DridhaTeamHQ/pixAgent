@@ -246,6 +246,10 @@ const state = {
   // same value drives the canvas preview and ffmpeg's crop regardless of
   // resolution.
   videoFocus: { x: 0.5, y: 0.5 },
+  // Stamped when the session starts and refreshed on each scrape, so it
+  // reads as "when this story was made", not "when the canvas last redrew".
+  createdAt: new Date(),
+  showTimestamp: true,
   videoCaption: "",         // burned into the clip, bottom-anchored
   videoCaptionSize: 40,     // design px at 920×1700; scaled per ratio
   secondLogoImage: null,
@@ -1696,6 +1700,7 @@ async function runScrape() {
     // has to re-fetch the URL — a second request that often fails on
     // paywalled or JS-rendered pages, silently degrading to headline-only.
     state.articleText = payload.articleText || "";
+    state.createdAt = new Date();   // this story was made now
     state.sourceUrl = payload.sourceUrl || scrapeUrlInput.value.trim();
     state.ready = true;
 
@@ -2350,6 +2355,7 @@ function drawPixTextScreen() {
   const bottomTextPadding = state.forceTextExport ? L.headline.bottomPadding : 335;
   const lastLineY = H - bottomTextPadding * (H / 1700);
   drawWrappedPreviewText(getDetailTextForPreview(), textX, minTextY, L.headline.maxWidth, lastLineY, 39 * s, 61 * s);
+  drawTimestamp(textX, lastLineY + 39 * s, s);
 
   if (!state.forceTextExport) {
     drawEngagementBar();
@@ -2357,6 +2363,50 @@ function drawPixTextScreen() {
     drawNavBar();
   }
 
+  ctx.restore();
+}
+
+/**
+ * Creation timestamp under the slide-2 paragraph — "07 Aug | 12:30 PM".
+ *
+ * Left edge aligns with the paragraph (same textX) so the two form one
+ * block rather than two loosely stacked things. Sits one paragraph-line
+ * below the last line of copy.
+ *
+ * Spec was Poppins / 70% opacity / 10px. The 10 is a Figma-frame value and
+ * frames differ in width, so it is expressed here relative to the 39px
+ * paragraph and scaled with the canvas — that keeps the proportion in the
+ * reference at every aspect ratio. TIMESTAMP_SIZE is the one number to
+ * change if it should read larger or smaller.
+ */
+const TIMESTAMP_SIZE = 17;      // design px, against a 39px paragraph
+const TIMESTAMP_OPACITY = 0.7;
+
+function formatCreatedAt(date) {
+  const d = date instanceof Date && !isNaN(date) ? date : new Date();
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = d.toLocaleString("en-GB", { month: "short" });
+  let hours = d.getHours();
+  const meridiem = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+  const mins = String(d.getMinutes()).padStart(2, "0");
+  return `${day} ${month} | ${hours}:${mins} ${meridiem}`;
+}
+
+function drawTimestamp(x, y, s) {
+  if (!state.showTimestamp) return;
+  ctx.save();
+  ctx.globalAlpha = TIMESTAMP_OPACITY;
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `500 ${Math.round(TIMESTAMP_SIZE * s)}px ${PREVIEW_TEXT_FONT}`;
+  // A soft shadow only — at 70% over a blurred photo the glyphs would
+  // otherwise disappear against light areas.
+  ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
+  ctx.shadowBlur = 10 * s;
+  ctx.shadowOffsetY = 2 * s;
+  ctx.fillText(formatCreatedAt(state.createdAt), x, y);
   ctx.restore();
 }
 
@@ -4389,3 +4439,12 @@ if (previewRail) {
     renderPoster();
   });
 })();
+
+// Timestamp toggle — the stamp is on by default; some posters do not want it.
+const showTimestampInput = document.getElementById("show-timestamp");
+if (showTimestampInput) {
+  showTimestampInput.addEventListener("change", () => {
+    state.showTimestamp = showTimestampInput.checked;
+    renderPoster();
+  });
+}
