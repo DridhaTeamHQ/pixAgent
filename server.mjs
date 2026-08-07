@@ -861,6 +861,11 @@ async function handleVideoClip(req, res) {
     const width = Math.trunc(Number(fields.width || 1080));
     const height = Math.trunc(Number(fields.height || 1920));
     const mute = String(fields.mute || "") === "true";
+    // Where the preview framed the crop, normalised 0..1. Defaults to centre
+    // so an older client that does not send these still behaves as before.
+    const clamp01 = (n) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0.5);
+    const focusX = clamp01(Number(fields.focusX));
+    const focusY = clamp01(Number(fields.focusY));
     const url = String(fields.url || "").trim();
 
     const duration = Math.round((end - start) * 1000) / 1000;
@@ -914,7 +919,14 @@ async function handleVideoClip(req, res) {
     // Scale-to-cover + centre-crop to the target frame, then composite the
     // overlay. `-ss` before `-i` seeks fast; accuracy still holds because we
     // re-encode. `0:a?` makes audio optional so silent sources don't fail.
-    const cover = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1`;
+    // scale-to-cover leaves one axis overflowing; crop that overflow at the
+    // offset the user framed rather than always centring. in_w/in_h are the
+    // POST-scale dimensions, so (in_w-out_w) is exactly the slack available,
+    // which keeps the expression valid whatever the source resolution.
+    const cover =
+      `scale=${width}:${height}:force_original_aspect_ratio=increase,` +
+      `crop=${width}:${height}:(in_w-${width})*${focusX.toFixed(4)}:(in_h-${height})*${focusY.toFixed(4)},` +
+      `setsar=1`;
     const args = ["-hide_banner", "-loglevel", "error", "-y", "-ss", String(start), "-i", srcPath];
     let filter;
     if (files.overlay && files.overlay.bytes > 0) {

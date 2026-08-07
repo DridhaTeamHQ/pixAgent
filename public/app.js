@@ -241,6 +241,11 @@ const state = {
   trimEnd: 0,
   videoMuted: false,
   videoExporting: false,
+  // Framing for the video slide. A landscape clip cropped to 9:16 loses most
+  // of its width, so which slice you keep matters — normalised 0..1 so the
+  // same value drives the canvas preview and ffmpeg's crop regardless of
+  // resolution.
+  videoFocus: { x: 0.5, y: 0.5 },
   videoCaption: "",         // burned into the clip, bottom-anchored
   videoCaptionSize: 40,     // design px at 920×1700; scaled per ratio
   secondLogoImage: null,
@@ -658,7 +663,10 @@ function escapeSvgText(value) {
 writeApplyBtn.addEventListener("click", async () => {
   const text = writeHeadline.value.trim();
   if (!text) return;
-  const detail = writeDetail.value.trim() || text;
+  // Slide 2 is NOT a reprint of slide 1. Falling back to the headline here
+  // put the same sentence on both cards, which is the "text paragraph shows
+  // the headline" bug and also what the editorial spec forbids.
+  const detail = writeDetail.value.trim();
   state.headline = text;
   state.detailText = limitDetailTextClient(detail);
   headlineEdit.value = text;
@@ -682,17 +690,13 @@ writeApplyBtn.addEventListener("click", async () => {
 writeHeadline.addEventListener("input", () => {
   state.headline = writeHeadline.value;
   headlineEdit.value = writeHeadline.value;
-  if (!writeDetail.value.trim()) {
-    state.detailText = limitDetailTextClient(writeHeadline.value);
-    if (detailEdit) detailEdit.value = state.detailText;
-  }
   setWriteStatus("");
   renderPoster();
 });
 
 writeDetail.addEventListener("input", (event) => {
   const text = event.inputType === "insertLineBreak" ? formatDetailBulletField(writeDetail) : writeDetail.value;
-  state.detailText = limitDetailTextClient(text || writeHeadline.value);
+  state.detailText = limitDetailTextClient(text);
   if (detailEdit) detailEdit.value = state.detailText;
   setWriteStatus("");
   renderPoster();
@@ -964,14 +968,11 @@ if (downloadButton) downloadButton.addEventListener("click", async () => {
 
 // Headline live edit
 headlineEdit.addEventListener("input", () => {
-  const previousManualText = writeHeadline.value;
-  const detailWasManualText = state.detailText === limitDetailTextClient(previousManualText);
   state.headline = headlineEdit.value;
   writeHeadline.value = headlineEdit.value;
-  if (!state.detailText || detailWasManualText || !writeDetail.value.trim()) {
-    state.detailText = limitDetailTextClient(headlineEdit.value);
-    if (detailEdit) detailEdit.value = state.detailText;
-  }
+  // Editing the headline used to overwrite the paragraph whenever a
+  // heuristic guessed the paragraph "was" the headline. The guess misfired,
+  // silently replacing real bullet copy. The two fields are independent now.
   renderPoster();
 });
 
@@ -2075,7 +2076,10 @@ function drawPixVideoScreen() {
       const scale = Math.max(W / v.videoWidth, H / v.videoHeight);
       const dw = v.videoWidth * scale;
       const dh = v.videoHeight * scale;
-      ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      // focus 0.5 is centred; 0 pins the left/top edge, 1 the right/bottom.
+      // Only the overflowing axis can move, so the frame never shows letterbox.
+      const f = state.videoFocus || { x: 0.5, y: 0.5 };
+      ctx.drawImage(v, -(dw - W) * f.x, -(dh - H) * f.y, dw, dh);
     }
   }
 
@@ -2300,7 +2304,7 @@ function startVideoPreviewLoop() {
   const tick = () => {
     const v = state.videoEl;
     // Park as soon as the mode changes or playback stops.
-    if (state.previewMode !== "video" || !v || v.paused || v.ended) {
+    if (!v || v.paused || v.ended) {
       videoPreviewRaf = 0;
       renderPoster();   // settle on the final frame
       return;
@@ -3332,14 +3336,20 @@ function makeSvgImage(svg) {
 /* ── Helpers ── */
 
 function getDetailTextForPreview() {
-  const fallback = "Paste a URL or write text to build a Pix story preview.";
+  // No headline fallback anywhere in here. The headline belongs to slide 1;
+  // echoing it onto slide 2 is the bug, not a graceful default. An empty
+  // paragraph shows a prompt instead, which is honest about the card being
+  // unfinished rather than looking deliberately duplicated.
+  const fallback = "Add key points in Text Paragraph, or generate them from a link.";
   if (!state.isDownloading && state.previewMode === "text") {
     const isWritingText = writeForm && !writeForm.hidden;
-    const draftText = isWritingText && writeDetail ? writeDetail.value : detailEdit?.value ?? state.detailText ?? state.headline ?? fallback;
-    return limitDetailTextClient(draftText, { preserveOpenBullet: true });
+    const draftText = isWritingText && writeDetail
+      ? writeDetail.value
+      : (detailEdit?.value ?? state.detailText ?? "");
+    return limitDetailTextClient(draftText.trim() ? draftText : fallback, { preserveOpenBullet: true });
   }
 
-  return limitDetailTextClient(state.detailText || state.headline || fallback);
+  return limitDetailTextClient((state.detailText || "").trim() || fallback);
 }
 
 function handleDetailBulletEnter(event) {
@@ -3914,6 +3924,7 @@ function loadLocalVideoFile(file) {
       if (videoEditor) videoEditor.hidden = false;
       setVideoStatus(`${file.name} · ${formatTimecode(videoPreviewEl.duration)}`, "success");
       renderPoster();
+      if (!videoPreviewEl.paused) startVideoPreviewLoop();
     }, { once: true });
   }
 }
@@ -4022,7 +4033,7 @@ const videoCaptionInput = document.getElementById("video-caption");
 if (videoCaptionInput) {
   videoCaptionInput.addEventListener("input", () => {
     state.videoCaption = videoCaptionInput.value;
-    if (state.previewMode === "video") renderPoster();
+    renderPoster();
   });
 }
 
@@ -4030,7 +4041,7 @@ const videoCaptionSizeInput = document.getElementById("video-caption-size");
 if (videoCaptionSizeInput) {
   videoCaptionSizeInput.addEventListener("input", () => {
     state.videoCaptionSize = Number(videoCaptionSizeInput.value) || 40;
-    if (state.previewMode === "video") renderPoster();
+    renderPoster();
   });
 }
 
@@ -4114,6 +4125,10 @@ async function exportVideoClip() {
     form.append("width", String(width));
     form.append("height", String(height));
     form.append("mute", state.videoMuted ? "true" : "false");
+    // ffmpeg must crop the same slice the preview showed, or the exported
+    // clip is framed differently from what was approved on screen.
+    form.append("focusX", String(state.videoFocus?.x ?? 0.5));
+    form.append("focusY", String(state.videoFocus?.y ?? 0.5));
     if (overlay) form.append("overlay", overlay, "overlay.png");
     if (state.videoFile) {
       form.append("video", state.videoFile, state.videoFile.name);
@@ -4163,13 +4178,13 @@ if (videoExportBtn) videoExportBtn.addEventListener("click", exportVideoClip);
 if (videoPreviewEl) {
   state.videoEl = videoPreviewEl;
   // Playback drives the rAF loop; everything else is a single repaint.
-  videoPreviewEl.addEventListener("play", () => {
-    if (state.previewMode === "video") startVideoPreviewLoop();
-  });
+  // The video card is always visible in the rail, so these fire unconditionally.
+  // They used to be gated on state.previewMode === "video", which is only true
+  // transiently while that card is being painted — so in practice the guard was
+  // always false and the card never updated on play or seek.
+  videoPreviewEl.addEventListener("play", () => startVideoPreviewLoop());
   ["seeked", "loadeddata", "pause", "ended"].forEach((ev) =>
-    videoPreviewEl.addEventListener(ev, () => {
-      if (state.previewMode === "video") renderPoster();
-    })
+    videoPreviewEl.addEventListener(ev, () => renderPoster())
   );
 }
 
@@ -4297,4 +4312,80 @@ if (previewRail) {
   sync();
   requestAnimationFrame(sync);
   window.addEventListener("load", sync);
+})();
+
+
+/* ── Drag to reframe the video slide ──
+   Cropping a landscape clip to 9:16 throws away most of its width, so the
+   default centre crop often cuts the subject in half. Dragging the video
+   card picks the slice to keep. The value is normalised, so the preview and
+   ffmpeg's crop agree at any resolution. */
+(() => {
+  const card = document.getElementById("video-canvas");
+  if (!card) return;
+
+  let dragging = false;
+  let startX = 0, startY = 0, startFocus = null;
+
+  const hasVideo = () => {
+    const v = state.videoEl;
+    return v && v.readyState >= 2 && v.videoWidth > 0;
+  };
+
+  // How far the frame can travel on each axis, in canvas pixels. Zero on the
+  // axis that exactly fits — dragging there would only reveal black.
+  function overflow() {
+    const v = state.videoEl;
+    const scale = Math.max(canvas.width / v.videoWidth, canvas.height / v.videoHeight);
+    return {
+      x: Math.max(0, v.videoWidth * scale - canvas.width),
+      y: Math.max(0, v.videoHeight * scale - canvas.height),
+    };
+  }
+
+  function pointerDown(e) {
+    if (!hasVideo()) return;
+    dragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startFocus = { ...(state.videoFocus || { x: 0.5, y: 0.5 }) };
+    card.setPointerCapture?.(e.pointerId);
+    card.classList.add("dragging");
+    e.preventDefault();
+  }
+
+  function pointerMove(e) {
+    if (!dragging) return;
+    const rect = card.getBoundingClientRect();
+    // The card is displayed smaller than the canvas, so convert CSS pixels
+    // of travel into canvas pixels before dividing by the overflow.
+    const scaleToCanvas = canvas.width / rect.width;
+    const over = overflow();
+    const dx = (e.clientX - startX) * scaleToCanvas;
+    const dy = (e.clientY - startY) * scaleToCanvas;
+    const next = {
+      x: over.x ? clamp(startFocus.x - dx / over.x, 0, 1) : 0.5,
+      y: over.y ? clamp(startFocus.y - dy / over.y, 0, 1) : 0.5,
+    };
+    state.videoFocus = next;
+    renderPoster();
+  }
+
+  function pointerUp(e) {
+    if (!dragging) return;
+    dragging = false;
+    card.releasePointerCapture?.(e.pointerId);
+    card.classList.remove("dragging");
+  }
+
+  card.addEventListener("pointerdown", pointerDown);
+  card.addEventListener("pointermove", pointerMove);
+  card.addEventListener("pointerup", pointerUp);
+  card.addEventListener("pointercancel", pointerUp);
+
+  // Double-click recentres — quicker than dragging back by feel.
+  card.addEventListener("dblclick", () => {
+    state.videoFocus = { x: 0.5, y: 0.5 };
+    renderPoster();
+  });
 })();

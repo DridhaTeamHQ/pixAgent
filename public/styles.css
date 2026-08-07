@@ -2444,3 +2444,7 @@ textarea:focus {
 @media (max-width: 760px) {
   .preview-card { flex: 0 0 min(72vw, 260px); }
 }
+
+/* The video card is draggable to reframe the crop. */
+#video-canvas { cursor: grab; touch-action: none; }
+#video-canvas.dragging { cursor: grabbing; }
