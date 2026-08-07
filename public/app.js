@@ -2418,7 +2418,9 @@ function drawTimestamp(x, y, s) {
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.font = `500 ${Math.round(TIMESTAMP_SIZE * s)}px ${PREVIEW_TEXT_FONT}`;
+  // Poppins regular (400). PREVIEW_TEXT_FONT already resolves to Poppins;
+  // only the weight differs from the paragraph, which sits at 700.
+  ctx.font = `400 ${Math.round(TIMESTAMP_SIZE * s)}px ${PREVIEW_TEXT_FONT}`;
   // A soft shadow only — at 70% over a blurred photo the glyphs would
   // otherwise disappear against light areas.
   ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
