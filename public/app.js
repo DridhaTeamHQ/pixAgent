@@ -381,8 +381,8 @@ const TAG_FONT       = "600 21px 'Poppins', 'Segoe UI', Arial, sans-serif";
 
 // Brand blue, matching the headline accent.
 const DRAWN_TAGS = {
-  "swipe-video":      { label: "Swipe to Video", bg: "#3979FF", icon: true },
-  "swipe-video-text": { label: "Swipe to Video", bg: "#3979FF", icon: false }
+  "swipe-video":      { label: "Swipe for Video", bg: "#3979FF", icon: true },
+  "swipe-video-text": { label: "Swipe for Video", bg: "#3979FF", icon: false }
 };
 
 // Wait for both Poppins AND Roboto Serif fonts to load before first render
