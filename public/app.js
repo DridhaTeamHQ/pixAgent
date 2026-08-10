@@ -2382,15 +2382,21 @@ function drawPixTextScreen() {
 const TIMESTAMP_SIZE = 17;      // design px, against a 39px paragraph
 const TIMESTAMP_OPACITY = 0.7;
 
+/**
+ * Date only — "07 Aug". No time.
+ *
+ * toLocaleDateString with no `timeZone` option resolves in the runtime's own
+ * zone, which is the browser's, which follows the operating system. So the
+ * date is whatever the person looking at the screen would call today, with
+ * no conversion and nothing to configure.
+ *
+ * This matters more than it looks: a UTC-based date is wrong for a third of
+ * every day in IST (UTC+5:30) — anything created before 05:30 local would
+ * carry yesterday's date.
+ */
 function formatCreatedAt(date) {
   const d = date instanceof Date && !isNaN(date) ? date : new Date();
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = d.toLocaleString("en-GB", { month: "short" });
-  let hours = d.getHours();
-  const meridiem = hours >= 12 ? "PM" : "AM";
-  hours = hours % 12 || 12;
-  const mins = String(d.getMinutes()).padStart(2, "0");
-  return `${day} ${month} | ${hours}:${mins} ${meridiem}`;
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
 
 /**
