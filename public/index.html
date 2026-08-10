@@ -405,6 +405,11 @@
             <svg class="ai-spark" width="14" height="14" aria-hidden="true"><use href="#i-spark"/></svg>
             AI Enhance Image
           </button>
+          <label class="slider-container" style="margin-top:10px;">
+            <span class="slider-label">Strength</span>
+            <input type="range" id="enhance-strength" min="0" max="100" step="5" value="70" />
+          </label>
+          <small class="helper-text" id="enhance-strength-hint">70% — lower this if faces look painted or plastic.</small>
           <small class="helper-text">Uses paid AI credits (~$0.06 per enhance). Runs only when you click.</small>
           <p id="ai-enhance-status" class="status-text" role="status" aria-live="polite"></p>
 

@@ -22,6 +22,9 @@ import glob
 import uuid
 import shutil
 import subprocess
+import io
+
+from PIL import Image
 
 from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.responses import Response, JSONResponse
@@ -35,6 +38,10 @@ FIDELITY = os.environ.get("CODEFORMER_FIDELITY", "1.0")
 UPSCALE  = os.environ.get("UPSCALE", "2")
 TIMEOUT  = int(os.environ.get("ENHANCE_TIMEOUT", "280"))
 MAX_BYTES = 12 * 1024 * 1024
+# How much of the model's output to keep, 0..1. 1.0 is the raw model; lower
+# values mix back toward a plain resample and remove the painted look at the
+# cost of some crispness. Overridable per request via X-Enhance-Strength.
+ENHANCE_STRENGTH = float(os.environ.get("ENHANCE_STRENGTH", "0.7"))
 
 # ENGINE:
 #   realesrgan (default) — pure pixel super-resolution of the whole frame.
@@ -57,13 +64,49 @@ RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "realesrgan_ru
 SWINIR_RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "swinir_runner.py")
 
 
+
+def blend_toward_resample(model_png_path, source_path, strength):
+    """Mix the model's output back toward a plain Lanczos resample.
+
+    Why this exists: measured against an undegraded original, both
+    Real-ESRGAN and SwinIR produce roughly TWICE the fine detail the
+    original has (372 and 347 against 189). They are not recovering face
+    detail, they are manufacturing it — hardened edges with smoothed skin
+    between them, which is exactly the "painted" look on portraits. On the
+    same test a plain resample scored closest to the original of anything.
+
+    So the useful control is not a different model, it is how much of the
+    model to keep. strength=1.0 is the raw model, 0.0 is a pure resample,
+    and values between trade artefact for softness continuously.
+
+    Costs nothing: one resize and one blend, no extra inference.
+    """
+    if strength >= 0.999:
+        with open(model_png_path, "rb") as f:
+            return f.read()
+
+    enhanced = Image.open(model_png_path).convert("RGB")
+    # The plain baseline is the ORIGINAL upscaled to the model's output size,
+    # so the two are pixel-aligned and only differ by what the model added.
+    base = Image.open(source_path).convert("RGB").resize(enhanced.size, Image.LANCZOS)
+
+    mixed = Image.blend(base, enhanced, max(0.0, min(1.0, strength)))
+    buf = io.BytesIO()
+    mixed.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "engine": ENGINE}
+    return {"ok": True, "engine": ENGINE, "strength": ENHANCE_STRENGTH}
 
 
 @app.post("/enhance")
-async def enhance(request: Request, x_secret: str = Header(default="")):
+async def enhance(
+    request: Request,
+    x_secret: str = Header(default=""),
+    x_enhance_strength: str = Header(default=""),
+):
     if SECRET and x_secret != SECRET:
         raise HTTPException(status_code=401, detail="unauthorized")
 
@@ -121,9 +164,19 @@ async def enhance(request: Request, x_secret: str = Header(default="")):
             raise HTTPException(status_code=500, detail="no output produced")
         # If several, take the largest file (the full restored image).
         best = max(final, key=lambda p: os.path.getsize(p))
-        with open(best, "rb") as f:
-            out = f.read()
-        return Response(content=out, media_type="image/png", headers={"X-Engine": ENGINE})
+
+        try:
+            strength = float(x_enhance_strength) if x_enhance_strength else ENHANCE_STRENGTH
+        except ValueError:
+            strength = ENHANCE_STRENGTH
+        strength = max(0.0, min(1.0, strength))
+
+        out = blend_toward_resample(best, f"{indir}/img.png", strength)
+        return Response(
+            content=out,
+            media_type="image/png",
+            headers={"X-Engine": ENGINE, "X-Enhance-Strength": f"{strength:.2f}"},
+        )
 
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="enhance timed out")

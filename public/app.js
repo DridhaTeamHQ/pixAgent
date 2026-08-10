@@ -218,6 +218,7 @@ const state = {
   headlineStyle: "half-purple",
   fontSize: 0, // 0 = auto
   overlayOpacity: 100,
+  enhanceStrength: 70,      // percent of the AI upscale to keep
   logoX: 810,
   logoY: 80,
   logoSize: 110,
@@ -3790,6 +3791,11 @@ if (aiEnhanceBtn) {
           // Story context helps the vision stage understand what the photo
           // shows, which sharpens the "preserve exactly this" instructions.
           "X-Headline": encodeURIComponent((state.headline || "").slice(0, 200)),
+          // How much of the model output to keep. Both upscalers manufacture
+          // roughly twice the fine detail the original had, which is what
+          // reads as a painted face; mixing back toward a plain resample is
+          // the dial for that.
+          "X-Enhance-Strength": String((state.enhanceStrength ?? 70) / 100),
         },
         body: blob,
       });
@@ -4522,3 +4528,20 @@ if (showTimestampInput) {
 
   scheduleNextMidnight();
 })();
+
+// Enhance strength — how much of the AI upscale to keep. Applies to the NEXT
+// enhance; it is a request parameter, not a canvas filter, so there is
+// nothing to re-render on change.
+const enhanceStrengthInput = document.getElementById("enhance-strength");
+const enhanceStrengthHint = document.getElementById("enhance-strength-hint");
+if (enhanceStrengthInput) {
+  const describe = (v) =>
+    v >= 90 ? `${v}% — full model output, sharpest but most artificial.`
+    : v >= 60 ? `${v}% — lower this if faces look painted or plastic.`
+    : v >= 25 ? `${v}% — mostly a clean resample, very natural.`
+    : `${v}% — essentially no AI enhancement.`;
+  enhanceStrengthInput.addEventListener("input", () => {
+    state.enhanceStrength = Number(enhanceStrengthInput.value);
+    if (enhanceStrengthHint) enhanceStrengthHint.textContent = describe(state.enhanceStrength);
+  });
+}

@@ -2730,7 +2730,7 @@ async function describeImageForEnhance(buffer, mime) {
 // (pixel-faithful, never regenerates faces). Returns a PNG data URL, or null
 // if the service isn't configured / errors / times out — caller then falls
 // back to gpt-image-1.5.
-async function tryRailwayUpscale(buffer, mime) {
+async function tryRailwayUpscale(buffer, mime, strength) {
   const base = (env("UPSCALER_URL")).replace(/\/+$/, "");
   if (!base) return null;
   const ctrl = new AbortController();
@@ -2741,6 +2741,9 @@ async function tryRailwayUpscale(buffer, mime) {
       headers: {
         "Content-Type": mime,
         "X-Secret": env("UPSCALER_SECRET"),
+        // How much of the model output to keep. Passed through from the
+        // client so the slider is live, rather than baked in per deploy.
+        ...(strength ? { "X-Enhance-Strength": String(strength) } : {}),
       },
       body: buffer,
       signal: ctrl.signal,
@@ -2792,7 +2795,8 @@ async function handleUpscaleImage(req, res) {
 
     // PRIMARY: self-hosted upscaler on Railway (pixel-faithful).
     const railwayT0 = Date.now();
-    const railway = await tryRailwayUpscale(buffer, mime);
+    const strength = (req.headers["x-enhance-strength"] || "").toString();
+    const railway = await tryRailwayUpscale(buffer, mime, strength);
     if (railway) {
       console.log(`✓ AI enhance via Railway (${railway.engine}) in ${Date.now() - railwayT0}ms`);
       sendJson(res, 200, { image: railway.dataUrl, engine: railway.engine });
