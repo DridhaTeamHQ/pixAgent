@@ -142,6 +142,41 @@ const types = {
   ".json": "application/json; charset=utf-8"
 };
 
+/* ── Asset versioning ──
+   index.html referenced "./app.js" with no version. That is fine while the
+   server sends cache headers, but anything cached BEFORE those headers
+   existed was stored with no Cache-Control and no Last-Modified at all, and
+   browsers cache such responses heuristically — they can serve them for days
+   without ever revalidating. Those users silently run an old app.js against
+   a new index.html and simply never receive new features.
+
+   Stamping the URL with a hash of the file's own mtime+size means a changed
+   asset is a changed URL, which no cache can satisfy from an old entry. */
+function assetVersion(...relPaths) {
+  let sig = "";
+  for (const rel of relPaths) {
+    try {
+      const st = statSync(join(root, rel));
+      sig += `${rel}:${st.mtimeMs}:${st.size};`;
+    } catch { /* missing asset — fall through to a stable default */ }
+  }
+  return createHash("sha1").update(sig).digest("hex").slice(0, 8);
+}
+
+// Computed once per process. The files cannot change under a running
+// container, and `node --watch` restarts the process on edit in dev.
+const ASSET_V = assetVersion("app.js", "styles.css");
+const assetMtimeMs = ["app.js", "styles.css"].reduce((newest, rel) => {
+  try { return Math.max(newest, statSync(join(root, rel)).mtimeMs); } catch { return newest; }
+}, 0);
+console.log(`\u2713 asset version ${ASSET_V}`);
+
+function withAssetVersion(html) {
+  return html
+    .replace(/(<script[^>]+src=")\.\/app\.js(")/g, `$1./app.js?v=${ASSET_V}$2`)
+    .replace(/(<link[^>]+href=")\.\/styles\.css(")/g, `$1./styles.css?v=${ASSET_V}$2`);
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/api/scrape") {
     await handleScrape(req, res);
@@ -267,10 +302,17 @@ const server = http.createServer(async (req, res) => {
   // get a real max-age.
   const stat = statSync(filePath);
   const ext = extname(filePath).toLowerCase();
-  const lastModified = stat.mtime.toUTCString();
+
+  // For HTML the response also depends on ASSET_V, which tracks app.js and
+  // styles.css. Validating on index.html's own mtime alone would return 304
+  // after a JS-only change, leaving the client on cached HTML that still
+  // points at the previous asset URL — the exact staleness this is meant to
+  // prevent. Advertise the newest mtime of the three instead.
+  const mtimeMs = ext === ".html" ? Math.max(stat.mtimeMs, assetMtimeMs) : stat.mtimeMs;
+  const lastModified = new Date(mtimeMs).toUTCString();
 
   const ims = req.headers["if-modified-since"];
-  if (ims && Date.parse(ims) >= Math.floor(stat.mtimeMs / 1000) * 1000) {
+  if (ims && Date.parse(ims) >= Math.floor(mtimeMs / 1000) * 1000) {
     res.writeHead(304, { "Last-Modified": lastModified });
     res.end();
     return;
@@ -280,6 +322,21 @@ const server = http.createServer(async (req, res) => {
   const cacheControl = immutable.includes(ext)
     ? "public, max-age=86400"
     : "no-cache";
+
+  // HTML is rewritten in flight to carry the asset version, so its length
+  // differs from the file on disk — read it rather than streaming.
+  if (ext === ".html") {
+    const body = Buffer.from(withAssetVersion(readFileSync(filePath, "utf-8")), "utf-8");
+    res.writeHead(200, {
+      "Content-Type": types[ext],
+      "Content-Length": body.length,
+      "Last-Modified": lastModified,
+      "Cache-Control": "no-cache",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end(body);
+    return;
+  }
 
   res.writeHead(200, {
     "Content-Type": types[ext] || "application/octet-stream",
