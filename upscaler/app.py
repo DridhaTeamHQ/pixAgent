@@ -28,17 +28,38 @@ from fastapi.responses import Response, JSONResponse
 
 app = FastAPI(title="Pix AI Upscaler")
 
-CODEFORMER_DIR = "/app/CodeFormer"
+CODEFORMER_DIR = os.environ.get("CODEFORMER_DIR", "/app/CodeFormer")
+PYTHON_BIN = os.environ.get("PYTHON_BIN", "python")
 SECRET   = os.environ.get("UPSCALER_SECRET", "")
-FIDELITY = os.environ.get("CODEFORMER_FIDELITY", "0.7")
+FIDELITY = os.environ.get("CODEFORMER_FIDELITY", "1.0")
 UPSCALE  = os.environ.get("UPSCALE", "2")
 TIMEOUT  = int(os.environ.get("ENHANCE_TIMEOUT", "280"))
 MAX_BYTES = 12 * 1024 * 1024
 
+# ENGINE:
+#   realesrgan (default) — pure pixel super-resolution of the whole frame.
+#                          Faces stay derived from the original pixels; safe
+#                          for news photography.
+#   swinir               — transformer restoration via spandrel. Sharper than
+#                          Real-ESRGAN and without its waxy, painted skin,
+#                          which is the artefact that shows worst on faces.
+#                          Roughly 7x the CPU time. Like realesrgan it only
+#                          resamples — no face model, so identity is safe.
+#   codeformer           — adds the CodeFormer face restorer. Reconstructs
+#                          faces through a learned codebook: dramatic on
+#                          ruined low-res faces, but drifts identity (e.g.
+#                          shaves stubble) on decent ones. Opt-in only.
+ENGINE = os.environ.get("ENGINE", "realesrgan").lower()
+
+# realesrgan_runner.py ships next to this file; it must run from inside the
+# CodeFormer repo so its vendored basicsr imports resolve.
+RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "realesrgan_runner.py")
+SWINIR_RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "swinir_runner.py")
+
 
 @app.get("/health")
 def health():
-    return {"ok": True, "engine": "codeformer+realesrgan"}
+    return {"ok": True, "engine": ENGINE}
 
 
 @app.post("/enhance")
@@ -61,24 +82,35 @@ async def enhance(request: Request, x_secret: str = Header(default="")):
         f.write(data)
 
     try:
-        cmd = [
-            "python", "inference_codeformer.py",
-            "-w", str(FIDELITY),
-            "--upscale", str(UPSCALE),
-            "--bg_upsampler", "realesrgan",
-            "--face_upsample",
-            "--input_path", indir,
-            "--output_path", outdir,
-        ]
+        if ENGINE == "codeformer":
+            cmd = [
+                PYTHON_BIN, "inference_codeformer.py",
+                "-w", str(FIDELITY),
+                "--upscale", str(UPSCALE),
+                "--bg_upsampler", "realesrgan",
+                "--face_upsample",
+                "--input_path", indir,
+                "--output_path", outdir,
+            ]
+        elif ENGINE == "swinir":
+            cmd = [PYTHON_BIN, SWINIR_RUNNER, f"{indir}/img.png", f"{outdir}/img.png"]
+        else:
+            cmd = [PYTHON_BIN, RUNNER, f"{indir}/img.png", f"{outdir}/img.png"]
+
+        # CodeFormer and the Real-ESRGAN runner import CodeFormer's vendored
+        # basicsr, so they must run from inside that repo. SwinIR goes through
+        # spandrel and has no such dependency — forcing it into that directory
+        # only breaks the run wherever the repo is not checked out.
+        cwd = None if ENGINE == "swinir" else CODEFORMER_DIR
         proc = subprocess.run(
-            cmd, cwd=CODEFORMER_DIR, capture_output=True, timeout=TIMEOUT,
+            cmd, cwd=cwd, capture_output=True, timeout=TIMEOUT,
         )
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout or b"").decode("utf-8", "ignore")[-400:]
-            raise HTTPException(status_code=500, detail=f"codeformer failed: {tail}")
+            raise HTTPException(status_code=500, detail=f"{ENGINE} failed: {tail}")
 
-        # Final full-frame results live in final_results/. Ignore the per-face
-        # crops (cropped_faces / restored_faces).
+        # CodeFormer writes full frames under final_results/; the realesrgan
+        # runner writes outdir/img.png. Either way, skip per-face crops.
         imgs = [
             p for p in glob.glob(f"{outdir}/**/*", recursive=True)
             if p.lower().endswith((".png", ".jpg", ".jpeg"))
@@ -91,7 +123,7 @@ async def enhance(request: Request, x_secret: str = Header(default="")):
         best = max(final, key=lambda p: os.path.getsize(p))
         with open(best, "rb") as f:
             out = f.read()
-        return Response(content=out, media_type="image/png")
+        return Response(content=out, media_type="image/png", headers={"X-Engine": ENGINE})
 
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="enhance timed out")

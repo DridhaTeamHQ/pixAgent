@@ -25,7 +25,8 @@ RUN git clone --depth 1 https://github.com/sczhou/CodeFormer.git /app/CodeFormer
 WORKDIR /app/CodeFormer
 RUN pip install -r requirements.txt \
  && python basicsr/setup.py develop \
- && pip install fastapi "uvicorn[standard]" python-multipart pillow
+ && pip install fastapi "uvicorn[standard]" python-multipart pillow \
+      spandrel
 
 # Pre-download model weights so the first request is fast and offline-safe:
 # face detection + parsing (facelib), the CodeFormer net, and the
@@ -36,8 +37,16 @@ RUN python scripts/download_pretrained_models.py facelib \
  && wget -q https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth \
       -O /app/CodeFormer/weights/realesrgan/RealESRGAN_x2plus.pth
 
+# SwinIR weights, used when ENGINE=swinir. ~140 MB — the bulk of this
+# image. Drop this layer if only Real-ESRGAN will ever be used.
+RUN mkdir -p /app/weights/swinir \
+ && wget -q https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth \
+      -O /app/weights/swinir/swinir_real_sr_x4_large.pth
+
 WORKDIR /app
 COPY app.py /app/app.py
+COPY realesrgan_runner.py /app/realesrgan_runner.py
+COPY swinir_runner.py /app/swinir_runner.py
 
 # Railway injects PORT.
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 300"]
