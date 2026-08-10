@@ -97,6 +97,17 @@ if (twitterClient) {
 }
 
 /* ── OpenAI (for AI tweet captions) ── */
+// Enhance routing. The self-hosted upscaler is free; gpt-image is not, and
+// it is only ever a fallback. DISABLE_GPT_IMAGE turns that fallback into a
+// hard error so a broken upscaler cannot quietly become a bill.
+const upscalerConfigured = Boolean(env("UPSCALER_URL"));
+const gptImageDisabled = /^(1|true|yes)$/i.test(env("DISABLE_GPT_IMAGE"));
+if (gptImageDisabled) {
+  console.log("\u2713 gpt-image fallback DISABLED — AI Enhance will only use the self-hosted upscaler");
+} else if (!upscalerConfigured) {
+  console.warn("\u26a0 No UPSCALER_URL — every AI Enhance will bill gpt-image (~$0.06 each).");
+}
+
 const openaiApiKey = env("OPENAI_API_KEY");
 if (openaiApiKey) {
   // Log a fingerprint, never the key. Prefix + length + last 4 is enough to
@@ -214,7 +225,8 @@ const server = http.createServer(async (req, res) => {
       uptime: Math.round(process.uptime()),
       features: {
         openai: Boolean(env("OPENAI_API_KEY")),
-        upscaler: Boolean(env("UPSCALER_URL")),
+        upscaler: upscalerConfigured,
+        gptImageFallback: !gptImageDisabled,
         // Video works when both binaries are on PATH; cookies are what make
         // YouTube reliable from a datacenter IP.
         ffmpeg: Boolean(ffmpegAvailable),
@@ -2786,6 +2798,21 @@ async function handleUpscaleImage(req, res) {
       sendJson(res, 200, { image: railway.dataUrl, engine: railway.engine });
       return;
     }
+    // The paid fallback is opt-out. Without this guard a momentary failure of
+    // the self-hosted upscaler silently spends OpenAI credits — the caller
+    // still gets an enhanced image, so nothing looks wrong until the bill
+    // arrives. Set DISABLE_GPT_IMAGE=true to make that spend impossible and
+    // surface the real problem instead.
+    if (gptImageDisabled) {
+      console.warn("⚠ upscaler unavailable and DISABLE_GPT_IMAGE is set — refusing to spend OpenAI credits");
+      sendJson(res, 503, {
+        error: upscalerConfigured
+          ? "The self-hosted upscaler did not respond, and the paid gpt-image fallback is disabled (DISABLE_GPT_IMAGE). Check that the upscaler service is running."
+          : "No upscaler is configured (UPSCALER_URL unset) and the paid gpt-image fallback is disabled (DISABLE_GPT_IMAGE).",
+      });
+      return;
+    }
+
     // else fall through to gpt-image-1.5 ↓
 
     // The SELECTED POSTER RATIO drives the output size, so a 9:16 poster
