@@ -406,16 +406,24 @@
           <!-- Route A: the Pix Upscaler GPT. Runs on the user's own ChatGPT
                account, so it costs this deployment nothing. -->
           <div id="enhance-external" hidden>
+            <!-- Copy first, THEN open the GPT. Without this the user arrives
+                 with whatever was last on their clipboard — typically the
+                 article URL — and Ctrl+V pastes a link, not the photo. -->
+            <button type="button" id="copy-source-btn" class="btn-secondary upload-action-btn" disabled>
+              Copy image for upscaling
+            </button>
             <a id="upscaler-gpt-link" class="btn-ai" href="#" target="_blank" rel="noopener noreferrer">
               <svg class="ai-spark" width="14" height="14" aria-hidden="true"><use href="#i-spark"/></svg>
-              Upscale in Pix Upscaler
+              Open Pix Upscaler
             </a>
             <ol class="enhance-steps">
-              <li>Open <strong>Pix Upscaler</strong> and paste your image there.</li>
-              <li>Copy the upscaled result — or download it.</li>
-              <li>Paste it back above, then download your poster with the logo and text.</li>
+              <li><strong>Copy image</strong> above — this puts the photo on your clipboard.</li>
+              <li>Open <strong>Pix Upscaler</strong> and press <kbd>Ctrl</kbd>+<kbd>V</kbd> to paste it.</li>
+              <li>Copy the upscaled result it gives back.</li>
+              <li>Return here and <strong>Paste image</strong> — then download your poster.</li>
             </ol>
             <small class="helper-text">Free — it runs on your own ChatGPT account, not on Pix credits.</small>
+            <p id="copy-source-status" class="status-text" role="status" aria-live="polite"></p>
           </div>
 
           <!-- Route B: in-app enhance via the self-hosted upscaler. -->

@@ -1478,6 +1478,18 @@ a.btn-ai { text-decoration: none; }
 }
 .enhance-steps li { margin-bottom: 3px; }
 .enhance-steps strong { color: var(--text-primary); font-weight: 600; }
+.enhance-steps kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--sunken);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9em;
+}
+
+/* The copy step comes before the GPT link, so it gets the gap instead. */
+#copy-source-btn { width: 100%; margin-top: 10px; }
 
 /* ─── Mobile bottom-sheet system ─────────────────────────────
    Desktop: .edit-sheet is invisible to layout (display:contents),

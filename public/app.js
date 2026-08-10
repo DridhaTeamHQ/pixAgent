@@ -2050,6 +2050,11 @@ function paintPoster() {
   if (enhanceBtn && !enhanceBtn.classList.contains("working")) {
     enhanceBtn.disabled = !state.mainImage;
   }
+  // Same rule for "Copy image for upscaling" — nothing to copy without one.
+  const copySrcBtn = document.getElementById("copy-source-btn");
+  if (copySrcBtn && !copySrcBtn.classList.contains("working")) {
+    copySrcBtn.disabled = !state.mainImage;
+  }
 }
 
 /**
@@ -3767,6 +3772,61 @@ const aiEnhanceStatus = document.getElementById("ai-enhance-status");
   link.href = gptUrl;
   external.hidden = false;
   builtin.hidden  = true;
+
+  /* Getting the photo TO the GPT is the part with no obvious answer: the
+     clipboard usually holds whatever was copied last (the article URL, most
+     often), so Ctrl+V over there pastes a link instead of an image. This puts
+     the actual background on the clipboard as a PNG. */
+  const copyBtn    = document.getElementById("copy-source-btn");
+  const copyStatus = document.getElementById("copy-source-status");
+  if (!copyBtn) return;
+
+  const setCopyStatus = (msg, kind) => {
+    if (!copyStatus) return;
+    copyStatus.className = "status-text" + (kind ? ` ${kind}` : "");
+    copyStatus.textContent = msg || "";
+  };
+
+  // Enabling is driven by the paint pass, alongside the AI Enhance button.
+  copyBtn.disabled = !state.mainImage;
+
+  copyBtn.addEventListener("click", async () => {
+    const img = state.mainImage;
+    if (!img) return;
+
+    // "working" is the flag the paint pass checks before re-enabling, so an
+    // in-flight copy is not undone by an unrelated repaint.
+    copyBtn.classList.add("working");
+    copyBtn.disabled = true;
+    setCopyStatus("Copying…");
+    try {
+      // Full resolution, not the preview size — the GPT should upscale from
+      // the best source available, and downscaling first would throw away
+      // exactly the detail we are asking it to recover.
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      const tmp = document.createElement("canvas");
+      tmp.width = w;
+      tmp.height = h;
+      tmp.getContext("2d").drawImage(img, 0, 0, w, h);
+
+      const blob = await new Promise((resolve, reject) => {
+        tmp.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not read the image."))), "image/png");
+      });
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      setCopyStatus(`Copied at ${w}x${h}. Open Pix Upscaler and press Ctrl+V.`, "success");
+    } catch (err) {
+      // Clipboard image writes need a secure context and permission; if either
+      // is missing, say what to do instead rather than just failing.
+      setCopyStatus(
+        `Could not copy automatically (${err.message}). Right-click the preview and choose "Copy image", or download it and drag the file into Pix Upscaler.`,
+        "error",
+      );
+    } finally {
+      copyBtn.classList.remove("working");
+      copyBtn.disabled = !state.mainImage;
+    }
+  });
 })();
 
 function setEnhanceStatus(msg, kind) {

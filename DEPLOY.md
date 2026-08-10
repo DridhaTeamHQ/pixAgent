@@ -17,14 +17,21 @@ the bill. Instead, set `UPSCALER_GPT_URL` to the **Pix Upscaler** GPT:
 
 <https://chatgpt.com/g/g-6a798c3876bc8191b5bd3deae1b983f8-pix-upscaler>
 
-The user pastes their image there, upscales it on **their own** ChatGPT
-account, copies the result, and pastes it back into Pix to download the poster
-with the logo, text and date tag. Cost to this deployment: zero.
+The round trip is: **Copy image for upscaling** in Pix → paste into the GPT →
+copy what it returns → **Paste image** back in Pix → download the poster with
+the logo, text and date tag. Cost to this deployment: zero.
 
-Setting that variable does two things, and the second is the one that matters:
+That first button matters more than it looks. Without it the user arrives at
+the GPT with whatever was last on their clipboard — usually the article URL
+they just scraped — and <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes a link instead of
+a photo. It writes the background to the clipboard as a PNG at **full
+resolution**, since downscaling first would discard the detail the GPT is
+being asked to recover.
 
-1. The UI swaps the *AI Enhance* button for a link to the GPT plus the three
-   steps.
+Setting the variable does two things, and the second is the one that matters:
+
+1. The UI swaps the *AI Enhance* button and its strength slider for the copy
+   button, a link to the GPT, and the four steps.
 2. **`/api/upscale-image` refuses with 503 before reading the request body.**
    Hiding a button is not a spending control — a stale tab or a direct POST
    would still bill. The server-side refusal is what makes the saving real.
