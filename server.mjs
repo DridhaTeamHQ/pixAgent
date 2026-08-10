@@ -103,15 +103,28 @@ if (twitterClient) {
 const upscalerConfigured = Boolean(env("UPSCALER_URL"));
 const gptImageDisabled = /^(1|true|yes)$/i.test(env("DISABLE_GPT_IMAGE"));
 
-/* Upscaling can be handed off entirely to the Pix Upscaler GPT: the user
-   pastes their image there, upscales it on their OWN ChatGPT account, and
-   pastes the result back into Pix. Setting UPSCALER_GPT_URL switches the UI
-   to that flow AND makes /api/enhance refuse outright — the button is its
-   only caller, but a stale tab or a direct POST must not be able to reopen
-   the bill this exists to close. */
-const UPSCALER_GPT_URL = env("UPSCALER_GPT_URL");
+/* Upscaling is handed off to the Pix Upscaler GPT: the user copies the image
+   out of Pix, upscales it on their OWN ChatGPT account, and pastes the result
+   back. This is the default and needs no configuration — baking the link in
+   means a fresh deploy cannot accidentally start billing for images because
+   someone forgot to set a variable.
+
+   It also makes /api/upscale-image refuse outright. The button is its only
+   caller, but a stale tab or a direct POST must not be able to reopen the
+   bill this exists to close.
+
+   UPSCALER_GPT_URL overrides the link if the GPT ever moves (no redeploy
+   needed); UPSCALER_GPT_URL=off restores the in-app enhance, which is how the
+   self-hosted upscaler in /upscaler is still exercised locally. */
+const DEFAULT_UPSCALER_GPT_URL =
+  "https://chatgpt.com/g/g-6a798c3876bc8191b5bd3deae1b983f8-pix-upscaler";
+const upscalerGptSetting = env("UPSCALER_GPT_URL");
+const UPSCALER_GPT_URL = /^(off|false|none|0)$/i.test(upscalerGptSetting)
+  ? ""
+  : (upscalerGptSetting || DEFAULT_UPSCALER_GPT_URL);
+
 if (UPSCALER_GPT_URL) {
-  console.log("✓ Upscaling delegated to the Pix Upscaler GPT — /api/enhance disabled, zero image spend");
+  console.log("✓ Upscaling delegated to the Pix Upscaler GPT — /api/upscale-image disabled, zero image spend");
 } else if (gptImageDisabled) {
   console.log("\u2713 gpt-image fallback DISABLED — AI Enhance will only use the self-hosted upscaler");
 } else if (!upscalerConfigured) {

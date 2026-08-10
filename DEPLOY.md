@@ -13,9 +13,13 @@ Two Railway services:
 
 Production does **not** run the upscaler service and does **not** call
 gpt-image. Both cost money per image, and image spend was the largest line on
-the bill. Instead, set `UPSCALER_GPT_URL` to the **Pix Upscaler** GPT:
+the bill. Upscaling goes to the **Pix Upscaler** GPT instead:
 
 <https://chatgpt.com/g/g-6a798c3876bc8191b5bd3deae1b983f8-pix-upscaler>
+
+**This is the default and needs no configuration.** The link is compiled in
+rather than read from a variable, so a fresh deploy cannot start billing for
+images because someone forgot to set one.
 
 The round trip is: **Copy image for upscaling** in Pix → paste into the GPT →
 copy what it returns → **Paste image** back in Pix → download the poster with
@@ -28,7 +32,7 @@ a photo. It writes the background to the clipboard as a PNG at **full
 resolution**, since downscaling first would discard the detail the GPT is
 being asked to recover.
 
-Setting the variable does two things, and the second is the one that matters:
+Two things follow from it, and the second is the one that matters:
 
 1. The UI swaps the *AI Enhance* button and its strength slider for the copy
    button, a link to the GPT, and the four steps.
@@ -64,9 +68,9 @@ Set on the **app** service:
 | `SHORTLY_AGENT_AUTH_SECRET` | **yes** | Shortly Agents access gate. Unset = no gate, app open to anyone |
 | `YTDLP_COOKIES` | for YouTube | base64 `cookies.txt` from a **throwaway** account. Free, but expires in weeks–months |
 | `YTDLP_PROXY` | for YouTube | residential proxy URL, e.g. `http://user:pass@host:port`. Costs money, but never expires and risks no account |
-| `UPSCALER_GPT_URL` | **production** | Pix Upscaler GPT link. Set = upscaling moves to the user's own ChatGPT account and this app can spend **nothing** on images |
-| `UPSCALER_URL` | only if not using the GPT | upscaler domain, no trailing slash. Unset = falls back to paid gpt-image |
-| `UPSCALER_SECRET` | only if not using the GPT | must match the upscaler service |
+| `UPSCALER_GPT_URL` | **no** | The Pix Upscaler GPT is baked in. Only set this to point at a different GPT, or `off` to restore the in-app enhance |
+| `UPSCALER_URL` | only after `=off` | upscaler domain, no trailing slash |
+| `UPSCALER_SECRET` | only after `=off` | must match the upscaler service |
 | `PEXELS_API_KEY` | optional | stock images. Unset = that source is skipped |
 | `FAL_KEY` | optional | Flux image generation (last-resort, paid) |
 | `IMAGE_QUALITY` | optional | `medium` (default). low ≈ $0.016, medium ≈ $0.034, high ≈ $0.25 per image. Irrelevant when `UPSCALER_GPT_URL` is set |
