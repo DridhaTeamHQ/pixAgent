@@ -246,9 +246,10 @@ const state = {
   // same value drives the canvas preview and ffmpeg's crop regardless of
   // resolution.
   videoFocus: { x: 0.5, y: 0.5 },
-  // Stamped when the session starts and refreshed on each scrape, so it
-  // reads as "when this story was made", not "when the canvas last redrew".
-  createdAt: new Date(),
+  // null = use the current date at paint time. Only set to a Date if a
+  // specific day ever needs pinning; leaving it null is what keeps an
+  // open tab honest across midnight.
+  createdAt: null,
   showTimestamp: true,
   videoCaption: "",         // burned into the clip, bottom-anchored
   videoCaptionSize: 40,     // design px at 920×1700; scaled per ratio
@@ -1700,7 +1701,6 @@ async function runScrape() {
     // has to re-fetch the URL — a second request that often fails on
     // paywalled or JS-rendered pages, silently degrading to headline-only.
     state.articleText = payload.articleText || "";
-    state.createdAt = new Date();   // this story was made now
     state.sourceUrl = payload.sourceUrl || scrapeUrlInput.value.trim();
     state.ready = true;
 
@@ -2395,6 +2395,10 @@ const TIMESTAMP_OPACITY = 0.7;
  * carry yesterday's date.
  */
 function formatCreatedAt(date) {
+  // Reads the clock at paint time. This used to render a Date frozen when the
+  // page loaded, which is wrong for the way the app is actually used: the tab
+  // stays open for days, so the stamp would sit on yesterday's date — or last
+  // week's — without anyone noticing.
   const d = date instanceof Date && !isNaN(date) ? date : new Date();
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
@@ -4474,3 +4478,47 @@ if (showTimestampInput) {
     renderPoster();
   });
 }
+
+
+/* ── Keep the date stamp current ──
+   Computing the date at paint time is only half of it: an idle tab never
+   repaints, so the canvas would keep showing the day it was last drawn.
+   This schedules a repaint just after local midnight, and re-checks whenever
+   the tab becomes visible again — a sleeping laptop does not fire timers, so
+   waking up is the case a timer alone would miss. Also covers the machine's
+   clock or timezone being changed while the tab sits open. */
+(() => {
+  const label = () => formatCreatedAt(state.createdAt);
+  let lastLabel = label();
+  let timer = 0;
+
+  function refreshIfRolledOver() {
+    const now = label();
+    if (now !== lastLabel) {
+      lastLabel = now;
+      renderPoster();
+    }
+  }
+
+  function scheduleNextMidnight() {
+    clearTimeout(timer);
+    const now = new Date();
+    const nextMidnight = new Date(now);
+    nextMidnight.setHours(24, 0, 0, 0);      // 00:00 tomorrow, local
+    // A couple of seconds past the boundary, so the new day is unambiguous.
+    const wait = Math.max(1000, nextMidnight.getTime() - now.getTime() + 2000);
+    timer = setTimeout(() => {
+      refreshIfRolledOver();
+      scheduleNextMidnight();
+    }, wait);
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    refreshIfRolledOver();
+    scheduleNextMidnight();   // the pending timer may have been throttled
+  });
+  window.addEventListener("focus", refreshIfRolledOver);
+
+  scheduleNextMidnight();
+})();
