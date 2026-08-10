@@ -399,6 +399,10 @@
             <button type="button" id="bg-paste-btn" class="btn-secondary upload-action-btn">Paste image</button>
             <span class="upload-shortcut">Tip: copy an image, then press Ctrl+V or Cmd+V here.</span>
           </div>
+          <!-- Clipboard results belong beside the button that caused them.
+               These used to go to the scrape status line, which sits in a
+               different column entirely. -->
+          <p id="bg-upload-status" class="status-text" role="status" aria-live="polite"></p>
 
           <!-- Two upscaling routes, one shown at a time. The server decides
                which by setting (or not setting) UPSCALER_GPT_URL. -->
@@ -420,7 +424,7 @@
               <li><strong>Copy image</strong> above — this puts the photo on your clipboard.</li>
               <li>Open <strong>Pix Upscaler</strong> and press <kbd>Ctrl</kbd>+<kbd>V</kbd> to paste it.</li>
               <li>Copy the upscaled result it gives back.</li>
-              <li>Return here and <strong>Paste image</strong> — then download your poster.</li>
+              <li>Return here, hit <strong>Paste image</strong> (press <kbd>Ctrl</kbd>+<kbd>V</kbd> if it asks) — then download your poster.</li>
             </ol>
             <small class="helper-text">Free — it runs on your own ChatGPT account, not on Pix credits.</small>
             <p id="copy-source-status" class="status-text" role="status" aria-live="polite"></p>

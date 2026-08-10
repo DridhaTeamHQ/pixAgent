@@ -1443,6 +1443,41 @@ async function loadClipboardImageData(clipboardData) {
   return false;
 }
 
+/* Clipboard messages go here rather than to the scrape status line, which
+   lives in a different column and left the user reading an error nowhere near
+   the button they pressed. */
+const bgUploadStatus = document.getElementById("bg-upload-status");
+function setImageStatus(message, type) {
+  if (!bgUploadStatus) { setStatus(message, type); return; }
+  bgUploadStatus.textContent = message || "";
+  bgUploadStatus.className = "status-text" + (type ? ` ${type}` : "");
+}
+
+/* Reading the clipboard in JS needs the clipboard-read permission, and
+   browsers routinely refuse it. A paste EVENT carries exactly the same data
+   and needs no permission at all — the user's keystroke is the authorisation.
+
+   So when the read is blocked we do not give up: we arm a one-shot listener
+   and ask for Ctrl+V. The old advice ("use Ctrl+V on the upload box") could
+   not be followed, because the upload box is a <label> wrapping a file input
+   — clicking it to give it focus opens the file picker instead. */
+let pasteArmed = false;
+let pasteArmTimer = null;
+
+function armPasteFallback() {
+  pasteArmed = true;
+  clearTimeout(pasteArmTimer);
+  // Don't stay armed forever, or a stray paste minutes later replaces the
+  // background with whatever the user copied since.
+  pasteArmTimer = setTimeout(() => { pasteArmed = false; }, 30000);
+  setImageStatus("Press Ctrl+V (or Cmd+V) now to paste your image.");
+}
+
+function disarmPasteFallback() {
+  pasteArmed = false;
+  clearTimeout(pasteArmTimer);
+}
+
 async function loadBackgroundImageFromClipboard() {
   if (!navigator.clipboard?.read) {
     if (navigator.clipboard?.readText) {
@@ -1456,7 +1491,7 @@ async function loadBackgroundImageFromClipboard() {
         console.warn("Clipboard text read failed:", error);
       }
     }
-    setStatus("Clipboard paste button is not supported here. Use Ctrl+V or Cmd+V on the upload box.", "error");
+    armPasteFallback();
     return;
   }
 
@@ -1480,10 +1515,10 @@ async function loadBackgroundImageFromClipboard() {
         if (text && isLikelyWebUrl(text) && (await loadBackgroundImageUrl(text, "Clipboard image"))) return;
       }
     }
-    setStatus("No image found in the clipboard.", "error");
+    setImageStatus("No image found in the clipboard.", "error");
   } catch (error) {
     console.warn("Clipboard image read failed:", error);
-    setStatus("Clipboard access was blocked. Copy an image, then use Ctrl+V or Cmd+V on the upload box.", "error");
+    armPasteFallback();
   }
 }
 
@@ -1511,8 +1546,9 @@ if (bgUploadZone) {
 
   bgUploadZone.addEventListener("paste", (event) => {
     event.preventDefault();
+    disarmPasteFallback();
     loadClipboardImageData(event.clipboardData).then((handled) => {
-      if (!handled) setStatus("No image found in the clipboard.", "error");
+      setImageStatus(handled ? "" : "No image found in the clipboard.", handled ? "" : "error");
     });
   });
 
@@ -1551,16 +1587,21 @@ if (bgUploadZone) {
 
 document.addEventListener("paste", (event) => {
   const target = event.target;
+  // Never steal a paste aimed at a text field — the URL box especially.
   if (isEditableElement(target)) return;
   const zoneFocused =
     document.activeElement === bgUploadZone ||
     document.activeElement === bgPasteBtn ||
     bgUploadZone?.contains?.(document.activeElement);
   const pasteInsideZone = bgUploadZone?.contains?.(target);
-  if (!zoneFocused && !pasteInsideZone) return;
+  // `pasteArmed` is what makes the fallback work: after a blocked clipboard
+  // read the keystroke arrives with focus still on the button, not in the
+  // upload zone, so the focus test alone would drop it.
+  if (!pasteArmed && !zoneFocused && !pasteInsideZone) return;
   event.preventDefault();
+  disarmPasteFallback();
   loadClipboardImageData(event.clipboardData).then((handled) => {
-    if (!handled) setStatus("No image found in the clipboard.", "error");
+    setImageStatus(handled ? "" : "No image found in the clipboard.", handled ? "" : "error");
   });
 });
 
