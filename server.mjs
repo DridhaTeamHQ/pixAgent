@@ -103,25 +103,25 @@ if (twitterClient) {
 const upscalerConfigured = Boolean(env("UPSCALER_URL"));
 const gptImageDisabled = /^(1|true|yes)$/i.test(env("DISABLE_GPT_IMAGE"));
 
-/* Upscaling is handed off to the Pix Upscaler GPT: the user copies the image
-   out of Pix, upscales it on their OWN ChatGPT account, and pastes the result
-   back. This is the default and needs no configuration — baking the link in
-   means a fresh deploy cannot accidentally start billing for images because
-   someone forgot to set a variable.
+/* In-app AI Enhance is the active path: the button calls /api/upscale-image,
+   which prefers the self-hosted upscaler and falls back to gpt-image.
 
-   It also makes /api/upscale-image refuse outright. The button is its only
-   caller, but a stale tab or a direct POST must not be able to reopen the
-   bill this exists to close.
+   The hand-off to the Pix Upscaler GPT — user copies the image out, upscales
+   it on their OWN ChatGPT account, pastes the result back — is kept but is now
+   opt-in, because it costs this deployment nothing. Set UPSCALER_GPT_URL to
+   switch to it; the link below is the one to use:
 
-   UPSCALER_GPT_URL overrides the link if the GPT ever moves (no redeploy
-   needed); UPSCALER_GPT_URL=off restores the in-app enhance, which is how the
-   self-hosted upscaler in /upscaler is still exercised locally. */
-const DEFAULT_UPSCALER_GPT_URL =
+     UPSCALER_GPT_URL=https://chatgpt.com/g/g-6a798c3876bc8191b5bd3deae1b983f8-pix-upscaler
+
+   When set, the UI swaps to that flow and /api/upscale-image refuses outright
+   — hiding a button is not a spending control, since a stale tab or a direct
+   POST would still bill. */
+const PIX_UPSCALER_GPT_URL =
   "https://chatgpt.com/g/g-6a798c3876bc8191b5bd3deae1b983f8-pix-upscaler";
 const upscalerGptSetting = env("UPSCALER_GPT_URL");
-const UPSCALER_GPT_URL = /^(off|false|none|0)$/i.test(upscalerGptSetting)
-  ? ""
-  : (upscalerGptSetting || DEFAULT_UPSCALER_GPT_URL);
+const UPSCALER_GPT_URL = /^(on|1|true|yes)$/i.test(upscalerGptSetting)
+  ? PIX_UPSCALER_GPT_URL                      // shorthand for the standard GPT
+  : (/^(off|false|none|0)$/i.test(upscalerGptSetting) ? "" : upscalerGptSetting);
 
 if (UPSCALER_GPT_URL) {
   console.log("✓ Upscaling delegated to the Pix Upscaler GPT — /api/upscale-image disabled, zero image spend");
@@ -253,6 +253,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && req.url?.startsWith("/api/stock-images?")) {
     await handleStockImages(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/rank-images") {
+    await handleRankImages(req, res);
     return;
   }
 
@@ -486,6 +491,238 @@ async function handleGoogleImages(req, res) {
     sendJson(res, 200, { images, source: images.length ? "web" : "none" });
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Image search failed." });
+  }
+}
+
+
+/* ═══════════════════════ AI image picker (GPT vision) ═══════════════════════
+
+   The scrapers above return images in whatever order Bing/Google/DDG happened
+   to emit them, and the app auto-applies images[0]. That first result is
+   frequently a logo, a collage, a watermarked stock preview or a headshot of
+   the wrong person — so the user re-picks by hand nearly every time.
+
+   This looks at the candidates and reorders them by how well they actually
+   serve the headline.
+
+   COST: this is a VISION read, not image generation — a different order of
+   magnitude from the gpt-image path this app just stopped using. At
+   detail:"low" each image is a flat 85 tokens regardless of its real size, so
+   six candidates plus the prompt is well under 1k input tokens on
+   gpt-4o-mini: roughly $0.0001 a call. Deliberately kept that way — sending
+   full-detail tiles would cost ~20x more for a judgement that only needs to
+   see composition and subject.
+
+   Failure is never fatal. Any error returns the original order, because a
+   worse-ordered grid is a far better outcome than a scrape that dies. */
+
+const RANK_MAX_CANDIDATES = 6;      // beyond this the tokens stop paying off
+const RANK_MAX_BYTES = 3 * 1024 * 1024;
+const RANK_FETCH_TIMEOUT_MS = 8000;
+
+/* OpenAI accepts png, jpeg, gif and webp — nothing else. Anything past that
+   (bmp, tiff, avif, ico) fails the request with a 400 that kills the WHOLE
+   batch, not just the offending image, so one odd candidate would silently
+   cost every other candidate its ranking. Measured: a live search returned
+   exactly such a file.
+
+   Sniffing the magic bytes rather than trusting Content-Type, because CDNs
+   routinely serve application/octet-stream, mislabel avif as jpeg, or hand
+   back an HTML error page with an image content-type. */
+function sniffSupportedImageMime(buf) {
+  if (buf.length < 12) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.toString("ascii", 0, 4) === "GIF8") return "image/gif";
+  if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return null;
+}
+
+async function fetchImageAsDataUrl(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), RANK_FETCH_TIMEOUT_MS);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        // Several news CDNs 403 an unrecognised agent, and some require a
+        // referer before they will serve the full-size file.
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*",
+      },
+    });
+    if (!r.ok) return null;
+
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > RANK_MAX_BYTES) return null;
+
+    // The bytes decide, not the header. This also drops SVGs (vector markup
+    // the model cannot judge, and never a usable news background) and HTML
+    // error pages served with an image content-type.
+    const mime = sniffSupportedImageMime(buf);
+    if (!mime) return null;
+
+    return `data:${mime};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* Stock agencies serve a watermarked "comp" preview at these paths. The bars
+   and tiled logos ruin a poster, and they are a licensing problem besides —
+   but they are hard to see once the model is looking at a 512px thumbnail.
+   Matching the URL costs nothing and never misses. */
+const WATERMARKED_HOSTS = [
+  /(^|\.)alamy\.com$/i,
+  /(^|\.)shutterstock\.com$/i,
+  /(^|\.)gettyimages\./i,
+  /(^|\.)istockphoto\.com$/i,
+  /(^|\.)dreamstime\.com$/i,
+  /(^|\.)123rf\.com$/i,
+  /(^|\.)depositphotos\.com$/i,
+  /(^|\.)agefotostock\.com$/i,
+  /(^|\.)stockphoto\./i,
+  /(^|\.)imago-images\./i,
+];
+
+function looksWatermarked(url) {
+  try {
+    const u = new URL(url);
+    if (WATERMARKED_HOSTS.some((re) => re.test(u.hostname))) return true;
+    // Some CDNs put the giveaway in the path instead of the host.
+    return /\/(comp|watermark|preview|display_pic_with_logo)\//i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function handleRankImages(req, res) {
+  let body = {};
+  try {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    body = JSON.parse(Buffer.concat(chunks).toString("utf-8") || "{}");
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON body." });
+    return;
+  }
+
+  const headline = String(body?.headline || "").trim().slice(0, 300);
+  const urls = Array.isArray(body?.urls) ? body.urls.filter((u) => typeof u === "string" && u) : [];
+
+  // Nothing to decide between — say so plainly rather than spending a call.
+  if (!openaiApiKey || urls.length < 2 || !headline) {
+    sendJson(res, 200, { order: urls.map((_, i) => i), ranked: false, reason: !openaiApiKey ? "no-api-key" : "nothing-to-rank" });
+    return;
+  }
+
+  const considered = urls.slice(0, RANK_MAX_CANDIDATES);
+  const t0 = Date.now();
+
+  try {
+    // Fetch in parallel; a slow CDN should not serialise the whole batch.
+    const fetched = await Promise.all(considered.map(async (u, i) => ({ i, dataUrl: await fetchImageAsDataUrl(u) })));
+    const usable = fetched.filter((f) => f.dataUrl);
+
+    if (usable.length < 2) {
+      sendJson(res, 200, { order: urls.map((_, i) => i), ranked: false, reason: "candidates-unreachable" });
+      return;
+    }
+
+    const content = [
+      {
+        type: "text",
+        text: [
+          `News headline: "${headline}"`,
+          "",
+          `You are shown ${usable.length} candidate images, numbered 1 to ${usable.length} in order.`,
+          "Rank them for use as the full-bleed background of a news poster.",
+          "",
+          "Strongly prefer: a real photograph, sharp and well exposed, with a clear subject",
+          "and enough plain area that a headline can sit over it legibly.",
+          "",
+          "Push to the bottom: logos, icons, flags, screenshots, collages or grids,",
+          "charts, heavy watermarks or stock overlays, text-dominant graphics,",
+          "and anything whose subject does not match the headline.",
+          "",
+          'Reply with ONLY JSON: {"order":[<best>,...,<worst>],"reject":[<unusable>]}',
+          "using the 1-based numbers. Every number must appear exactly once in order.",
+        ].join("\n"),
+      },
+    ];
+    for (const f of usable) {
+      // detail:"low" fixes the cost at 85 tokens per image. The model still
+      // sees composition, subject and sharpness at that size, which is all
+      // this judgement needs.
+      content.push({ type: "image_url", image_url: { url: f.dataUrl, detail: "low" } });
+    }
+
+    const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openaiApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content }],
+        temperature: 0,
+        max_tokens: 120,
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text().catch(() => "");
+      console.warn(`⚠ image ranking failed (OpenAI ${aiRes.status}) — keeping search order:`, errText.slice(0, 200));
+      sendJson(res, 200, { order: urls.map((_, i) => i), ranked: false, reason: "openai-error" });
+      return;
+    }
+
+    const data = await aiRes.json();
+    const parsed = JSON.parse(data?.choices?.[0]?.message?.content || "{}");
+
+    // Map the model's 1-based positions back to indexes in the ORIGINAL urls
+    // array — `usable` is a filtered subset, so positions do not line up.
+    const toOriginal = (n) => usable[n - 1]?.i;
+    const seen = new Set();
+    const order = [];
+    for (const n of Array.isArray(parsed.order) ? parsed.order : []) {
+      const idx = toOriginal(Number(n));
+      if (Number.isInteger(idx) && !seen.has(idx)) { seen.add(idx); order.push(idx); }
+    }
+    const reject = [];
+    for (const n of Array.isArray(parsed.reject) ? parsed.reject : []) {
+      const idx = toOriginal(Number(n));
+      if (Number.isInteger(idx)) reject.push(idx);
+    }
+
+    // Anything the model omitted keeps its original relative position at the
+    // end, so a truncated or malformed reply can never drop a candidate.
+    for (let i = 0; i < urls.length; i++) if (!seen.has(i)) order.push(i);
+
+    // Rejects sink below everything else rather than disappearing — the user
+    // may still want one, and a wrong rejection should not hide an image.
+    const rejectSet = new Set(reject);
+    let finalOrder = [...order.filter((i) => !rejectSet.has(i)), ...order.filter((i) => rejectSet.has(i))];
+
+    // Vision misses comp watermarks at detail:"low" — measured: it ranked a
+    // watermarked Alamy preview above a clean photo. The host name is a free
+    // and far more reliable signal than more tokens would be, so demote known
+    // stock-preview URLs afterwards. Stable within each group, so the model's
+    // ordering still decides everything else.
+    finalOrder = [
+      ...finalOrder.filter((i) => !looksWatermarked(urls[i])),
+      ...finalOrder.filter((i) => looksWatermarked(urls[i])),
+    ];
+
+    console.log(`✓ ranked ${usable.length} images in ${Date.now() - t0}ms (best=#${finalOrder[0]}, rejected ${reject.length})`);
+    sendJson(res, 200, { order: finalOrder, reject, ranked: true });
+  } catch (err) {
+    console.warn("⚠ image ranking error — keeping search order:", err.message);
+    sendJson(res, 200, { order: urls.map((_, i) => i), ranked: false, reason: "error" });
   }
 }
 

@@ -1871,6 +1871,35 @@ async function fetchStockImages(headline, options = {}) {
       images = buildFallbackImageSuggestions(searchQuery);
     }
 
+    // The scrapers return whatever order Bing/Google/DDG emitted, and the
+    // auto-apply below takes images[0] — which is often a logo, a collage or
+    // a watermarked stock preview. Let GPT vision reorder them against the
+    // headline first, so the best candidate is the one that gets applied.
+    //
+    // Never allowed to break the flow: the endpoint answers with the original
+    // order on any failure, and this is wrapped besides.
+    if (images.length > 1 && headline) {
+      try {
+        const rankRes = await fetch("/api/rank-images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            headline,
+            urls: images.map(im => im.image || im.preview).filter(Boolean),
+          }),
+        });
+        const rankData = await rankRes.json();
+        if (rankRes.ok && rankData.ranked && Array.isArray(rankData.order)) {
+          const reordered = rankData.order.map(i => images[i]).filter(Boolean);
+          // Only accept a permutation that kept every candidate.
+          if (reordered.length === images.length) {
+            images = reordered;
+            console.log(`[images] AI picked #${rankData.order[0]} as best of ${images.length}`);
+          }
+        }
+      } catch { /* ranking is an improvement, not a requirement */ }
+    }
+
     if (!images.length) {
       stockImagesSection.hidden = true;
       report("No matching images found. You can upload one manually.", "error");

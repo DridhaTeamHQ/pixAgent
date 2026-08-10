@@ -11,15 +11,26 @@ Two Railway services:
 
 ## Upscaling in production
 
-Production does **not** run the upscaler service and does **not** call
-gpt-image. Both cost money per image, and image spend was the largest line on
-the bill. Upscaling goes to the **Pix Upscaler** GPT instead:
+**In-app AI Enhance is on.** The button calls `/api/upscale-image`, which
+tries the self-hosted upscaler first and falls back to gpt-image.
+
+> **This costs money per image.** With `UPSCALER_URL` unset, every enhance
+> bills gpt-image at roughly **$0.034**. Deploying the `upscaler` service and
+> pointing `UPSCALER_URL` at it makes the common path free; gpt-image then
+> only covers the case where that service is down. `DISABLE_GPT_IMAGE=true`
+> turns that fallback into an error instead of a silent bill.
+
+### Free alternative: the Pix Upscaler GPT
+
+Optionally hand upscaling to the user's own ChatGPT account. They copy the
+image out of Pix, upscale it there, and paste the result back:
 
 <https://chatgpt.com/g/g-6a798c3876bc8191b5bd3deae1b983f8-pix-upscaler>
 
-**This is the default and needs no configuration.** The link is compiled in
-rather than read from a variable, so a fresh deploy cannot start billing for
-images because someone forgot to set one.
+Enable with `UPSCALER_GPT_URL=on` (or a different GPT's URL). The UI swaps to
+that flow and `/api/upscale-image` refuses outright — hiding a button is not a
+spending control, since a stale tab or a direct POST would still bill. Cost to
+this deployment: zero.
 
 The round trip is: **Copy image for upscaling** in Pix → paste into the GPT →
 copy what it returns → **Paste image** back in Pix → download the poster with
@@ -68,9 +79,10 @@ Set on the **app** service:
 | `SHORTLY_AGENT_AUTH_SECRET` | **yes** | Shortly Agents access gate. Unset = no gate, app open to anyone |
 | `YTDLP_COOKIES` | for YouTube | base64 `cookies.txt` from a **throwaway** account. Free, but expires in weeks–months |
 | `YTDLP_PROXY` | for YouTube | residential proxy URL, e.g. `http://user:pass@host:port`. Costs money, but never expires and risks no account |
-| `UPSCALER_GPT_URL` | **no** | The Pix Upscaler GPT is baked in. Only set this to point at a different GPT, or `off` to restore the in-app enhance |
-| `UPSCALER_URL` | only after `=off` | upscaler domain, no trailing slash |
-| `UPSCALER_SECRET` | only after `=off` | must match the upscaler service |
+| `UPSCALER_URL` | strongly advised | upscaler domain, no trailing slash. **Unset = every AI Enhance bills gpt-image (~$0.034)** |
+| `UPSCALER_SECRET` | with `UPSCALER_URL` | must match the upscaler service |
+| `DISABLE_GPT_IMAGE` | optional | `true` makes a missing/broken upscaler an error instead of a silent gpt-image bill |
+| `UPSCALER_GPT_URL` | optional | `on` hands upscaling to the user's own ChatGPT account and disables `/api/upscale-image`. Zero image spend |
 | `PEXELS_API_KEY` | optional | stock images. Unset = that source is skipped |
 | `FAL_KEY` | optional | Flux image generation (last-resort, paid) |
 | `IMAGE_QUALITY` | optional | `medium` (default). low ≈ $0.016, medium ≈ $0.034, high ≈ $0.25 per image. Irrelevant when `UPSCALER_GPT_URL` is set |
@@ -142,14 +154,13 @@ curl https://YOUR-APP.up.railway.app/health
 
 ```json
 {"ok":true,"uptime":42,
- "features":{"openai":true,"upscaler":false,"upscalerGpt":true,
-             "gptImageFallback":false,"ffmpeg":true,
+ "features":{"openai":true,"upscaler":true,"upscalerGpt":false,
+             "gptImageFallback":true,"ffmpeg":true,
              "ytdlp":true,"ytdlpCookies":true,"pexels":true}}
 ```
 
-- `upscalerGpt` **true** with `upscaler` and `gptImageFallback` **false** is
-  the intended production state: upscaling runs on the user's ChatGPT account
-  and no image spend is possible. `upscaler:false` here is not a fault.
+- `upscaler:false` with `gptImageFallback:true` means AI Enhance works but
+  **every use bills gpt-image**. Set `UPSCALER_URL` to fix that.
 - `ffmpeg` or `ytdlp` false → the image built wrong; check the build log.
 - Anything else false → that variable is missing or misspelled.
 
