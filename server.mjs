@@ -102,7 +102,17 @@ if (twitterClient) {
 // hard error so a broken upscaler cannot quietly become a bill.
 const upscalerConfigured = Boolean(env("UPSCALER_URL"));
 const gptImageDisabled = /^(1|true|yes)$/i.test(env("DISABLE_GPT_IMAGE"));
-if (gptImageDisabled) {
+
+/* Upscaling can be handed off entirely to the Pix Upscaler GPT: the user
+   pastes their image there, upscales it on their OWN ChatGPT account, and
+   pastes the result back into Pix. Setting UPSCALER_GPT_URL switches the UI
+   to that flow AND makes /api/enhance refuse outright — the button is its
+   only caller, but a stale tab or a direct POST must not be able to reopen
+   the bill this exists to close. */
+const UPSCALER_GPT_URL = env("UPSCALER_GPT_URL");
+if (UPSCALER_GPT_URL) {
+  console.log("✓ Upscaling delegated to the Pix Upscaler GPT — /api/enhance disabled, zero image spend");
+} else if (gptImageDisabled) {
   console.log("\u2713 gpt-image fallback DISABLED — AI Enhance will only use the self-hosted upscaler");
 } else if (!upscalerConfigured) {
   console.warn("\u26a0 No UPSCALER_URL — every AI Enhance will bill gpt-image (~$0.06 each).");
@@ -176,6 +186,21 @@ function withAssetVersion(html) {
     .replace(/(<script[^>]+src=")\.\/app\.js(")/g, `$1./app.js?v=${ASSET_V}$2`)
     .replace(/(<link[^>]+href=")\.\/styles\.css(")/g, `$1./styles.css?v=${ASSET_V}$2`);
 }
+
+/* ── Runtime config handed to the browser ──
+   Inlined into <head> rather than fetched. A fetch would paint the built-in
+   enhance button first and swap it a moment later, and whichever one the user
+   clicked during that window would be the wrong one. Inlining means the very
+   first paint is already correct. */
+function withRuntimeConfig(html) {
+  // "</" inside a <script> would close the tag early, so escape it. A URL
+  // cannot realistically contain that, but the cost of being sure is one
+  // replace and the failure mode is a broken page.
+  const cfg = JSON.stringify({ upscalerGptUrl: UPSCALER_GPT_URL }).replace(/</g, "\\u003c");
+  return html.replace("</head>", `<script>window.PIX_CONFIG=${cfg};</script>\n</head>`);
+}
+
+const renderHtml = (html) => withRuntimeConfig(withAssetVersion(html));
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/api/scrape") {
@@ -261,7 +286,10 @@ const server = http.createServer(async (req, res) => {
       features: {
         openai: Boolean(env("OPENAI_API_KEY")),
         upscaler: upscalerConfigured,
-        gptImageFallback: !gptImageDisabled,
+        gptImageFallback: !gptImageDisabled && !UPSCALER_GPT_URL,
+        // True means upscaling happens on the user's ChatGPT account and this
+        // deployment cannot spend image credits at all.
+        upscalerGpt: Boolean(UPSCALER_GPT_URL),
         // Video works when both binaries are on PATH; cookies are what make
         // YouTube reliable from a datacenter IP.
         ffmpeg: Boolean(ffmpegAvailable),
@@ -326,7 +354,7 @@ const server = http.createServer(async (req, res) => {
   // HTML is rewritten in flight to carry the asset version, so its length
   // differs from the file on disk — read it rather than streaming.
   if (ext === ".html") {
-    const body = Buffer.from(withAssetVersion(readFileSync(filePath, "utf-8")), "utf-8");
+    const body = Buffer.from(renderHtml(readFileSync(filePath, "utf-8")), "utf-8");
     res.writeHead(200, {
       "Content-Type": types[ext],
       "Content-Length": body.length,
@@ -2824,6 +2852,16 @@ async function tryRailwayUpscale(buffer, mime, strength) {
 }
 
 async function handleUpscaleImage(req, res) {
+  // Upscaling is the user's own ChatGPT session now. Refuse before reading the
+  // body: this route is the single place image credits could ever be spent, so
+  // the guard belongs here and not only in the UI that hides the button.
+  if (UPSCALER_GPT_URL) {
+    sendJson(res, 503, {
+      error: "In-app enhancing is off. Upscale your image in the Pix Upscaler GPT, then paste the result back here.",
+      upscalerGptUrl: UPSCALER_GPT_URL,
+    });
+    return;
+  }
   if (!openaiApiKey) {
     sendJson(res, 503, { error: "OPENAI_API_KEY not set on server." });
     return;

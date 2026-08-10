@@ -7,7 +7,30 @@ Two Railway services:
 | Service | Root Directory | What it is |
 |---|---|---|
 | **app** | `.` | `server.mjs` — frontend, every `/api/*` route, **and the video pipeline** |
-| **upscaler** | `upscaler` | AI Enhance (CodeFormer + Real-ESRGAN) |
+| **upscaler** | `upscaler` | AI Enhance (CodeFormer + Real-ESRGAN) — **not deployed in production**, see below |
+
+## Upscaling in production
+
+Production does **not** run the upscaler service and does **not** call
+gpt-image. Both cost money per image, and image spend was the largest line on
+the bill. Instead, set `UPSCALER_GPT_URL` to the **Pix Upscaler** GPT:
+
+<https://chatgpt.com/g/g-6a798c3876bc8191b5bd3deae1b983f8-pix-upscaler>
+
+The user pastes their image there, upscales it on **their own** ChatGPT
+account, copies the result, and pastes it back into Pix to download the poster
+with the logo, text and date tag. Cost to this deployment: zero.
+
+Setting that variable does two things, and the second is the one that matters:
+
+1. The UI swaps the *AI Enhance* button for a link to the GPT plus the three
+   steps.
+2. **`/api/upscale-image` refuses with 503 before reading the request body.**
+   Hiding a button is not a spending control — a stale tab or a direct POST
+   would still bill. The server-side refusal is what makes the saving real.
+
+The `upscaler` service and `UPSCALER_URL` remain supported for local work;
+they are simply unset in production.
 
 `server.mjs` serves the static frontend and all API routes, and shells out to
 `ffmpeg` and `yt-dlp` for Slide 2 video. The upscaler stays separate because
@@ -34,11 +57,12 @@ Set on the **app** service:
 | `SHORTLY_AGENT_AUTH_SECRET` | **yes** | Shortly Agents access gate. Unset = no gate, app open to anyone |
 | `YTDLP_COOKIES` | for YouTube | base64 `cookies.txt` from a **throwaway** account. Free, but expires in weeks–months |
 | `YTDLP_PROXY` | for YouTube | residential proxy URL, e.g. `http://user:pass@host:port`. Costs money, but never expires and risks no account |
-| `UPSCALER_URL` | for AI Enhance | upscaler domain, no trailing slash. Unset = falls back to paid gpt-image |
-| `UPSCALER_SECRET` | for AI Enhance | must match the upscaler service |
+| `UPSCALER_GPT_URL` | **production** | Pix Upscaler GPT link. Set = upscaling moves to the user's own ChatGPT account and this app can spend **nothing** on images |
+| `UPSCALER_URL` | only if not using the GPT | upscaler domain, no trailing slash. Unset = falls back to paid gpt-image |
+| `UPSCALER_SECRET` | only if not using the GPT | must match the upscaler service |
 | `PEXELS_API_KEY` | optional | stock images. Unset = that source is skipped |
 | `FAL_KEY` | optional | Flux image generation (last-resort, paid) |
-| `IMAGE_QUALITY` | optional | `medium` (default). low ≈ $0.016, medium ≈ $0.06, high ≈ $0.25 per image |
+| `IMAGE_QUALITY` | optional | `medium` (default). low ≈ $0.016, medium ≈ $0.034, high ≈ $0.25 per image. Irrelevant when `UPSCALER_GPT_URL` is set |
 | `MAX_CLIP_SECONDS` | optional | `90` |
 | `MAX_UPLOAD_BYTES` | optional | `314572800` (300 MB) |
 | `TWITTER_API_KEY` etc. | optional | only for `/api/twitter/post` |
@@ -107,10 +131,14 @@ curl https://YOUR-APP.up.railway.app/health
 
 ```json
 {"ok":true,"uptime":42,
- "features":{"openai":true,"upscaler":true,"ffmpeg":true,
+ "features":{"openai":true,"upscaler":false,"upscalerGpt":true,
+             "gptImageFallback":false,"ffmpeg":true,
              "ytdlp":true,"ytdlpCookies":true,"pexels":true}}
 ```
 
+- `upscalerGpt` **true** with `upscaler` and `gptImageFallback` **false** is
+  the intended production state: upscaling runs on the user's ChatGPT account
+  and no image spend is possible. `upscaler:false` here is not a fault.
 - `ffmpeg` or `ytdlp` false → the image built wrong; check the build log.
 - Anything else false → that variable is missing or misspelled.
 

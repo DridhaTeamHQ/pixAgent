@@ -3746,10 +3746,28 @@ if (copyAllBtn) {
   });
 }
 
-/* ═══════════════════════ AI Enhance (gpt-image-1) ═══════════════════════ */
+/* ═══════════════════════ AI Enhance ═══════════════════════ */
 
 const aiEnhanceBtn    = document.getElementById("ai-enhance-btn");
 const aiEnhanceStatus = document.getElementById("ai-enhance-status");
+
+/* When the server points at the Pix Upscaler GPT, upscaling moves to the
+   user's own ChatGPT account: paste there, copy the result, paste it back
+   above. The built-in button is hidden rather than left disabled — a greyed
+   button invites clicking and explains nothing, whereas the steps say where
+   the work actually happens. The server refuses /api/upscale-image in this
+   mode too, so hiding the button is presentation, not the guard. */
+(function configureEnhanceRoute() {
+  const gptUrl = (window.PIX_CONFIG?.upscalerGptUrl || "").trim();
+  const external = document.getElementById("enhance-external");
+  const builtin  = document.getElementById("enhance-builtin");
+  const link     = document.getElementById("upscaler-gpt-link");
+  if (!gptUrl || !external || !builtin || !link) return;
+
+  link.href = gptUrl;
+  external.hidden = false;
+  builtin.hidden  = true;
+})();
 
 function setEnhanceStatus(msg, kind) {
   if (!aiEnhanceStatus) return;

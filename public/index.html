@@ -400,17 +400,37 @@
             <span class="upload-shortcut">Tip: copy an image, then press Ctrl+V or Cmd+V here.</span>
           </div>
 
-          <!-- gpt-image-1 enhance: regenerates the background at higher clarity -->
-          <button type="button" id="ai-enhance-btn" class="btn-ai" disabled>
-            <svg class="ai-spark" width="14" height="14" aria-hidden="true"><use href="#i-spark"/></svg>
-            AI Enhance Image
-          </button>
-          <label class="slider-container" style="margin-top:10px;">
-            <span class="slider-label">Strength</span>
-            <input type="range" id="enhance-strength" min="0" max="100" step="5" value="70" />
-          </label>
-          <small class="helper-text" id="enhance-strength-hint">70% — lower this if faces look painted or plastic.</small>
-          <small class="helper-text">Uses paid AI credits (~$0.06 per enhance). Runs only when you click.</small>
+          <!-- Two upscaling routes, one shown at a time. The server decides
+               which by setting (or not setting) UPSCALER_GPT_URL. -->
+
+          <!-- Route A: the Pix Upscaler GPT. Runs on the user's own ChatGPT
+               account, so it costs this deployment nothing. -->
+          <div id="enhance-external" hidden>
+            <a id="upscaler-gpt-link" class="btn-ai" href="#" target="_blank" rel="noopener noreferrer">
+              <svg class="ai-spark" width="14" height="14" aria-hidden="true"><use href="#i-spark"/></svg>
+              Upscale in Pix Upscaler
+            </a>
+            <ol class="enhance-steps">
+              <li>Open <strong>Pix Upscaler</strong> and paste your image there.</li>
+              <li>Copy the upscaled result — or download it.</li>
+              <li>Paste it back above, then download your poster with the logo and text.</li>
+            </ol>
+            <small class="helper-text">Free — it runs on your own ChatGPT account, not on Pix credits.</small>
+          </div>
+
+          <!-- Route B: in-app enhance via the self-hosted upscaler. -->
+          <div id="enhance-builtin">
+            <button type="button" id="ai-enhance-btn" class="btn-ai" disabled>
+              <svg class="ai-spark" width="14" height="14" aria-hidden="true"><use href="#i-spark"/></svg>
+              AI Enhance Image
+            </button>
+            <label class="slider-container" style="margin-top:10px;">
+              <span class="slider-label">Strength</span>
+              <input type="range" id="enhance-strength" min="0" max="100" step="5" value="70" />
+            </label>
+            <small class="helper-text" id="enhance-strength-hint">70% — lower this if faces look painted or plastic.</small>
+            <small class="helper-text">Uses paid AI credits (~$0.034 per enhance). Runs only when you click.</small>
+          </div>
           <p id="ai-enhance-status" class="status-text" role="status" aria-live="polite"></p>
 
           <div id="stock-images-section" class="acc-subgroup" hidden>

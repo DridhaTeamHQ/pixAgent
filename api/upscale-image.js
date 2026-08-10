@@ -47,7 +47,10 @@ async function tryRailwayUpscale(buffer, mime) {
     }
     const out = Buffer.from(await r.arrayBuffer());
     if (out.length < 1000) return null;
-    return `data:image/png;base64,${out.toString("base64")}`;
+    return {
+      dataUrl: `data:image/png;base64,${out.toString("base64")}`,
+      engine: r.headers.get("x-engine") || "railway",
+    };
   } catch (e) {
     console.warn("Railway upscaler unreachable — falling back to gpt-image:", e.message);
     return null;
@@ -161,12 +164,12 @@ export default async function handler(req, res) {
     const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
     const headline = decodeURIComponent(req.headers["x-headline"] || "").trim().slice(0, 200);
 
-    // PRIMARY: self-hosted CodeFormer + Real-ESRGAN on Railway (pixel-faithful).
+    // PRIMARY: self-hosted upscaler on Railway (pixel-faithful).
     const railwayT0 = Date.now();
-    const railwayImage = await tryRailwayUpscale(buffer, mime);
-    if (railwayImage) {
-      console.log(`AI enhance via Railway (codeformer) in ${Date.now() - railwayT0}ms`);
-      res.status(200).json({ image: railwayImage, engine: "codeformer" });
+    const railway = await tryRailwayUpscale(buffer, mime);
+    if (railway) {
+      console.log(`AI enhance via Railway (${railway.engine}) in ${Date.now() - railwayT0}ms`);
+      res.status(200).json({ image: railway.dataUrl, engine: railway.engine });
       return;
     }
     // else fall through to gpt-image-1.5 ↓
