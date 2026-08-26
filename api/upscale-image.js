@@ -25,6 +25,21 @@ const IMAGE_ENHANCE_PROMPT = [
   "Return a natural documentary photograph, not AI artwork.",
 ].join("\n");
 
+const GPT_IMAGE_ENHANCE_MODEL = "gpt-image-1.5";
+
+function openAIImageError(raw, status) {
+  try {
+    const parsed = JSON.parse(raw);
+    const error = parsed?.error || {};
+    return {
+      message: String(error.message || `OpenAI image ${status}`).slice(0, 300),
+      code: String(error.code || "").slice(0, 100),
+    };
+  } catch {
+    return { message: `OpenAI image ${status}`, code: "" };
+  }
+}
+
 function imageSizeForOrientation(orientation) {
   if (orientation === "landscape") return "1536x1024";
   if (orientation === "portrait") return "1024x1536";
@@ -55,7 +70,7 @@ export default async function handler(req, res) {
     const orientation = (req.headers["x-image-orientation"] || "").toString();
     const size = imageSizeForOrientation(orientation);
     const quality = (process.env.IMAGE_QUALITY || "high").toLowerCase();
-    const model = process.env.GPT_IMAGE_MODEL || "gpt-image-1.5";
+    const model = GPT_IMAGE_ENHANCE_MODEL;
 
     const form = new FormData();
     form.append("model", model);
@@ -74,8 +89,13 @@ export default async function handler(req, res) {
 
     if (!aiRes.ok) {
       const errText = await aiRes.text().catch(() => "");
+      const upstream = openAIImageError(errText, aiRes.status);
       console.error(`${model} ${aiRes.status}:`, errText.slice(0, 400));
-      res.status(502).json({ error: `OpenAI image ${aiRes.status}`, detail: errText.slice(0, 300) });
+      res.status(502).json({
+        error: upstream.message,
+        code: upstream.code || undefined,
+        upstreamStatus: aiRes.status,
+      });
       return;
     }
 

@@ -24,8 +24,9 @@ ffmpeg, and yt-dlp. Railway must use the Dockerfile build rather than Nixpacks.
 - There is no vision-analysis pass, Railway upscaler service, CodeFormer,
   Real-ESRGAN, SwinIR, aspect-ratio outpainting, or fallback image model.
 
-Each enhancement consumes OpenAI image credits. Set `GPT_IMAGE_MODEL` only if
-you intentionally want to change the configured GPT Image model.
+Each enhancement consumes OpenAI image credits. The Enhance route deliberately
+locks its model because `input_fidelity=high` is part of the face-preservation
+contract and is not accepted by every GPT Image model on the edit endpoint.
 
 ## Environment variables
 
@@ -36,7 +37,6 @@ Set these on the Railway app service:
 | `OPENAI_API_KEY` | **yes** | Article generation, captions, image analysis, and AI Enhance |
 | `SHORTLY_AGENT_AUTH_SECRET` | **yes** | Shortly Agents access gate; unset leaves the app open |
 | `IMAGE_QUALITY` | optional | GPT Image quality; defaults to `high` |
-| `GPT_IMAGE_MODEL` | optional | Defaults to `gpt-image-1.5` |
 | `YTDLP_COOKIES` | for protected video sources | Base64 cookies.txt from a throwaway account |
 | `YTDLP_PROXY` | optional | Residential proxy for video extraction |
 | `PEXELS_API_KEY` | optional | Stock images |

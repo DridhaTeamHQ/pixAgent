@@ -3863,7 +3863,10 @@ if (aiEnhanceBtn) {
         body: blob,
       });
       const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      if (!resp.ok) {
+        const reason = data.error || data.detail || `HTTP ${resp.status}`;
+        throw new Error(data.code ? `${reason} (${data.code})` : reason);
+      }
       if (!data.image) throw new Error("No image returned.");
 
       // Swap the background for the enhanced version

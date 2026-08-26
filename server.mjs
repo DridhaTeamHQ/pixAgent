@@ -2923,6 +2923,25 @@ const IMAGE_ENHANCE_PROMPT = [
   "Return a natural documentary photograph, not AI artwork.",
 ].join("\n");
 
+// input_fidelity=high is essential for faces and is accepted by this model on
+// the Images edit endpoint. Do not make this an environment override: an old
+// Railway variable selecting gpt-image-2 turns the request into a 400 because
+// that endpoint/model combination rejects input_fidelity.
+const GPT_IMAGE_ENHANCE_MODEL = "gpt-image-1.5";
+
+function openAIImageError(raw, status) {
+  try {
+    const parsed = JSON.parse(raw);
+    const error = parsed?.error || {};
+    return {
+      message: String(error.message || `OpenAI image ${status}`).slice(0, 300),
+      code: String(error.code || "").slice(0, 100),
+    };
+  } catch {
+    return { message: `OpenAI image ${status}`, code: "" };
+  }
+}
+
 function imageSizeForOrientation(orientation) {
   if (orientation === "landscape") return "1536x1024";
   if (orientation === "portrait") return "1024x1536";
@@ -2957,7 +2976,7 @@ async function handleUpscaleImage(req, res) {
     const orientation = (req.headers["x-image-orientation"] || "").toString();
     const size = imageSizeForOrientation(orientation);
     const quality = (env("IMAGE_QUALITY") || "high").toLowerCase();
-    const model = env("GPT_IMAGE_MODEL") || "gpt-image-1.5";
+    const model = GPT_IMAGE_ENHANCE_MODEL;
 
     const t0 = Date.now();
     const form = new FormData();
@@ -2976,8 +2995,13 @@ async function handleUpscaleImage(req, res) {
 
     if (!aiRes.ok) {
       const errText = await aiRes.text().catch(() => "");
+      const upstream = openAIImageError(errText, aiRes.status);
       console.error(`✗ ${model} ${aiRes.status}:`, errText.slice(0, 400));
-      sendJson(res, 502, { error: `OpenAI image ${aiRes.status}`, detail: errText.slice(0, 300) });
+      sendJson(res, 502, {
+        error: upstream.message,
+        code: upstream.code || undefined,
+        upstreamStatus: aiRes.status,
+      });
       return;
     }
 
