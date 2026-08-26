@@ -2911,8 +2911,7 @@ async function handleGenerateArticle(req, res) {
 /* ── OpenAI — direct GPT Image enhance ──
    There is deliberately one model call and no intermediate upscaler,
    vision-analysis pass, aspect-ratio conversion, or model fallback. Keeping
-   the source composition unchanged gives input_fidelity=high the best chance
-   of preserving real faces instead of reconstructing them. */
+   the source composition unchanged reduces unnecessary face reconstruction. */
 const IMAGE_ENHANCE_PROMPT = [
   "Upscale and restore this exact real news photograph.",
   "Preserve the original composition, crop, camera perspective, lighting, colours and background.",
@@ -2923,11 +2922,10 @@ const IMAGE_ENHANCE_PROMPT = [
   "Return a natural documentary photograph, not AI artwork.",
 ].join("\n");
 
-// input_fidelity=high is essential for faces and is accepted by this model on
-// the Images edit endpoint. Do not make this an environment override: an old
-// Railway variable selecting gpt-image-2 turns the request into a 400 because
-// that endpoint/model combination rejects input_fidelity.
-const GPT_IMAGE_ENHANCE_MODEL = "gpt-image-1.5";
+// A direct comparison on a real news portrait found GPT Image 2 at high
+// quality retained the most natural facial texture. The edit endpoint rejects
+// input_fidelity for this model, so do not send that option.
+const GPT_IMAGE_ENHANCE_MODEL = "gpt-image-2";
 
 function openAIImageError(raw, status) {
   try {
@@ -2984,7 +2982,6 @@ async function handleUpscaleImage(req, res) {
     form.append("prompt", IMAGE_ENHANCE_PROMPT);
     form.append("size", size);
     form.append("quality", quality);
-    form.append("input_fidelity", "high");
     form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
     const aiRes = await fetch("https://api.openai.com/v1/images/edits", {

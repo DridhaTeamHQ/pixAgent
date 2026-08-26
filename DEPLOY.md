@@ -14,9 +14,8 @@ ffmpeg, and yt-dlp. Railway must use the Dockerfile build rather than Nixpacks.
 ## AI Enhance
 
 `POST /api/upscale-image` sends the source photograph directly to
-`gpt-image-1.5` using the OpenAI Images edit endpoint.
+`gpt-image-2` using the OpenAI Images edit endpoint.
 
-- `input_fidelity=high` is always enabled.
 - The default `IMAGE_QUALITY` is `high` to retain natural photographic texture.
 - The output follows the source orientation; Pix handles poster cropping.
 - The prompt explicitly preserves identity, pores, wrinkles, facial hair, and
@@ -25,8 +24,8 @@ ffmpeg, and yt-dlp. Railway must use the Dockerfile build rather than Nixpacks.
   Real-ESRGAN, SwinIR, aspect-ratio outpainting, or fallback image model.
 
 Each enhancement consumes OpenAI image credits. The Enhance route deliberately
-locks its model because `input_fidelity=high` is part of the face-preservation
-contract and is not accepted by every GPT Image model on the edit endpoint.
+locks its model to the best result from portrait testing. It does not send
+`input_fidelity`, which GPT Image 2 rejects on the edit endpoint.
 
 ## Environment variables
 
