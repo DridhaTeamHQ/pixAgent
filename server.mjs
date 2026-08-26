@@ -15,8 +15,9 @@ import {
 import {
   GPT_IMAGE_ENHANCE_MODEL,
   GPT_IMAGE_ENHANCE_QUALITY,
-  GPT_IMAGE_ENHANCE_SIZE,
-  IMAGE_ENHANCE_PROMPT,
+  imageEnhancePromptForAspect,
+  imageEnhanceSizeForAspect,
+  normalizePosterAspect,
 } from "./lib/ai-enhance.js";
 
 const root = join(process.cwd(), "public");
@@ -2955,13 +2956,15 @@ async function handleUpscaleImage(req, res) {
       return;
     }
     const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
+    const posterAspect = normalizePosterAspect((req.headers["x-poster-aspect"] || "").toString());
+    const outputSize = imageEnhanceSizeForAspect(posterAspect);
     const model = GPT_IMAGE_ENHANCE_MODEL;
 
     const t0 = Date.now();
     const form = new FormData();
     form.append("model", model);
-    form.append("prompt", IMAGE_ENHANCE_PROMPT);
-    form.append("size", GPT_IMAGE_ENHANCE_SIZE);
+    form.append("prompt", imageEnhancePromptForAspect(posterAspect));
+    form.append("size", outputSize);
     form.append("quality", GPT_IMAGE_ENHANCE_QUALITY);
     form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
@@ -2990,11 +2993,13 @@ async function handleUpscaleImage(req, res) {
       return;
     }
 
-    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${model}, framing=auto, detail=auto)`);
+    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${model}, aspect=${posterAspect}, size=${outputSize}, quality=${GPT_IMAGE_ENHANCE_QUALITY})`);
     sendJson(res, 200, {
       image: `data:image/png;base64,${b64}`,
       engine: model,
-      framing: GPT_IMAGE_ENHANCE_SIZE,
+      framing: "poster-aware",
+      aspect: posterAspect,
+      outputSize,
       detail: GPT_IMAGE_ENHANCE_QUALITY,
     });
   } catch (err) {

@@ -1,15 +1,16 @@
 // Direct GPT Image enhancement endpoint.
 //
-// One request goes straight from the source photograph to gpt-image-1.5.
+// One request goes straight from the source photograph to gpt-image-2.
 // There is no separate vision pass, self-hosted upscaler, outpainting step,
-// or model fallback. Framing and detail are selected by the model.
+// or model fallback. Pix supplies the target poster aspect for framing.
 
 import { readRawBody } from "../lib/http.js";
 import {
   GPT_IMAGE_ENHANCE_MODEL,
   GPT_IMAGE_ENHANCE_QUALITY,
-  GPT_IMAGE_ENHANCE_SIZE,
-  IMAGE_ENHANCE_PROMPT,
+  imageEnhancePromptForAspect,
+  imageEnhanceSizeForAspect,
+  normalizePosterAspect,
 } from "../lib/ai-enhance.js";
 
 export const config = {
@@ -54,12 +55,14 @@ export default async function handler(req, res) {
     }
 
     const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
+    const posterAspect = normalizePosterAspect((req.headers["x-poster-aspect"] || "").toString());
+    const outputSize = imageEnhanceSizeForAspect(posterAspect);
     const model = GPT_IMAGE_ENHANCE_MODEL;
 
     const form = new FormData();
     form.append("model", model);
-    form.append("prompt", IMAGE_ENHANCE_PROMPT);
-    form.append("size", GPT_IMAGE_ENHANCE_SIZE);
+    form.append("prompt", imageEnhancePromptForAspect(posterAspect));
+    form.append("size", outputSize);
     form.append("quality", GPT_IMAGE_ENHANCE_QUALITY);
     form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
@@ -89,11 +92,13 @@ export default async function handler(req, res) {
       return;
     }
 
-    console.log(`AI enhance done in ${Date.now() - startedAt}ms (${model}, framing=auto, detail=auto)`);
+    console.log(`AI enhance done in ${Date.now() - startedAt}ms (${model}, aspect=${posterAspect}, size=${outputSize}, quality=${GPT_IMAGE_ENHANCE_QUALITY})`);
     res.status(200).json({
       image: `data:image/png;base64,${b64}`,
       engine: model,
-      framing: GPT_IMAGE_ENHANCE_SIZE,
+      framing: "poster-aware",
+      aspect: posterAspect,
+      outputSize,
       detail: GPT_IMAGE_ENHANCE_QUALITY,
     });
   } catch (err) {

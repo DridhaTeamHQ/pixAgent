@@ -3841,8 +3841,8 @@ if (aiEnhanceBtn) {
     setEnhanceStatus("Enhancing directly with GPT Image (30–90s)…");
 
     try {
-      // Send the source in its original aspect ratio. GPT Image selects the
-      // output framing and detail automatically.
+      // Keep all source pixels for restoration. The selected Pix aspect is
+      // sent separately so the model can compose for the actual poster.
       const rawW = img.naturalWidth || img.width;
       const rawH = img.naturalHeight || img.height;
       const scale = Math.min(1, 1536 / Math.max(rawW, rawH));
@@ -3858,6 +3858,7 @@ if (aiEnhanceBtn) {
         method: "POST",
         headers: {
           "Content-Type": "image/png",
+          "X-Poster-Aspect": state.aspectRatio,
         },
         body: blob,
       });
@@ -3877,9 +3878,13 @@ if (aiEnhanceBtn) {
       });
       await ensureImageFocalPoint(enhanced);
       state.mainImage = enhanced;
+      // Old offsets belong to the source image and produce a bad crop when
+      // applied to a newly framed output. Reset them so Pix centres the new
+      // face/subject focal point with its standard 10% cover headroom.
+      resetImageControls();
       renderPoster();
       const engineLabel = data.engine || "GPT Image";
-      setEnhanceStatus(`✓ Enhanced via ${engineLabel} with auto framing + detail. Re-pick a stock image to undo.`, "success");
+      setEnhanceStatus(`✓ Enhanced via ${engineLabel} and reframed for ${data.aspect || state.aspectRatio}. Re-pick a stock image to undo.`, "success");
     } catch (err) {
       setEnhanceStatus(`Enhance failed: ${err.message}`, "error");
     } finally {

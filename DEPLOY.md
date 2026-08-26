@@ -14,18 +14,20 @@ ffmpeg, and yt-dlp. Railway must use the Dockerfile build rather than Nixpacks.
 ## AI Enhance
 
 `POST /api/upscale-image` sends the source photograph directly to
-`gpt-image-1.5` using the OpenAI Images edit endpoint.
+`gpt-image-2` using the OpenAI Images edit endpoint.
 
-- `size=auto` lets the model choose the most appropriate framing.
-- `quality=auto` lets the model choose the appropriate render detail.
-- The prompt explicitly preserves identity, pores, wrinkles, facial hair, and
-  natural skin texture while rejecting waxy, plastic, or clay-like rendering.
+- The selected Pix aspect maps to an exact output canvas, so the model crops
+  and modestly zooms for the real poster instead of guessing its destination.
+- High-quality output is used with a conservative prompt that explicitly
+  forbids invented pores, skin grain, beard hairs, micro-contrast, and halos.
+- Pix resets stale pan/zoom and centres the enhanced face or subject using its
+  existing focal-point framing.
 - There is no vision-analysis pass, Railway upscaler service, CodeFormer,
   Real-ESRGAN, SwinIR, aspect-ratio outpainting, or fallback image model.
 
 Each enhancement consumes OpenAI image credits. The Enhance route deliberately
-locks the model and both automatic output settings so stale Railway variables
-cannot override the intended behavior.
+locks the model and quality so stale Railway variables cannot override the
+intended behavior.
 
 ## Environment variables
 
