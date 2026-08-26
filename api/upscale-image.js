@@ -1,11 +1,16 @@
 // Direct GPT Image enhancement endpoint.
 //
-// One request goes straight from the source photograph to gpt-image-2.
+// One request goes straight from the source photograph to gpt-image-1.5.
 // There is no separate vision pass, self-hosted upscaler, outpainting step,
-// or model fallback. An unchanged source orientation reduces unnecessary face
-// reconstruction.
+// or model fallback. Framing and detail are selected by the model.
 
 import { readRawBody } from "../lib/http.js";
+import {
+  GPT_IMAGE_ENHANCE_MODEL,
+  GPT_IMAGE_ENHANCE_QUALITY,
+  GPT_IMAGE_ENHANCE_SIZE,
+  IMAGE_ENHANCE_PROMPT,
+} from "../lib/ai-enhance.js";
 
 export const config = {
   api: {
@@ -14,18 +19,6 @@ export const config = {
   },
   maxDuration: 300,
 };
-
-const IMAGE_ENHANCE_PROMPT = [
-  "Upscale and restore this exact real news photograph.",
-  "Preserve the original composition, crop, camera perspective, lighting, colours and background.",
-  "Preserve every person's exact identity, facial geometry, expression, age, pores, wrinkles, facial hair and natural skin texture.",
-  "Remove only compression artifacts and sensor noise; recover realistic photographic detail with restrained sharpening.",
-  "Do not smooth, airbrush, beautify, stylise, repaint or reconstruct skin. Avoid waxy, plastic, clay-like or illustrated faces.",
-  "Do not add, remove or move people or objects. Do not add text, logos, captions, watermarks or graphics.",
-  "Return a natural documentary photograph, not AI artwork.",
-].join("\n");
-
-const GPT_IMAGE_ENHANCE_MODEL = "gpt-image-2";
 
 function openAIImageError(raw, status) {
   try {
@@ -38,12 +31,6 @@ function openAIImageError(raw, status) {
   } catch {
     return { message: `OpenAI image ${status}`, code: "" };
   }
-}
-
-function imageSizeForOrientation(orientation) {
-  if (orientation === "landscape") return "1536x1024";
-  if (orientation === "portrait") return "1024x1536";
-  return "1024x1024";
 }
 
 export default async function handler(req, res) {
@@ -67,16 +54,13 @@ export default async function handler(req, res) {
     }
 
     const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
-    const orientation = (req.headers["x-image-orientation"] || "").toString();
-    const size = imageSizeForOrientation(orientation);
-    const quality = (process.env.IMAGE_QUALITY || "high").toLowerCase();
     const model = GPT_IMAGE_ENHANCE_MODEL;
 
     const form = new FormData();
     form.append("model", model);
     form.append("prompt", IMAGE_ENHANCE_PROMPT);
-    form.append("size", size);
-    form.append("quality", quality);
+    form.append("size", GPT_IMAGE_ENHANCE_SIZE);
+    form.append("quality", GPT_IMAGE_ENHANCE_QUALITY);
     form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
     const startedAt = Date.now();
@@ -105,8 +89,13 @@ export default async function handler(req, res) {
       return;
     }
 
-    console.log(`AI enhance done in ${Date.now() - startedAt}ms (${model}, ${size}, quality=${quality})`);
-    res.status(200).json({ image: `data:image/png;base64,${b64}`, engine: model });
+    console.log(`AI enhance done in ${Date.now() - startedAt}ms (${model}, framing=auto, detail=auto)`);
+    res.status(200).json({
+      image: `data:image/png;base64,${b64}`,
+      engine: model,
+      framing: GPT_IMAGE_ENHANCE_SIZE,
+      detail: GPT_IMAGE_ENHANCE_QUALITY,
+    });
   } catch (err) {
     console.error("upscale-image error:", err);
     res.status(500).json({ error: err.message || "Image enhance failed." });

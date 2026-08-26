@@ -12,6 +12,12 @@ import Busboy from "busboy";
 import {
   suggestRegister, registerRules, assessTone, rectifyInstruction,
 } from "./lib/editorial-tone.js";
+import {
+  GPT_IMAGE_ENHANCE_MODEL,
+  GPT_IMAGE_ENHANCE_QUALITY,
+  GPT_IMAGE_ENHANCE_SIZE,
+  IMAGE_ENHANCE_PROMPT,
+} from "./lib/ai-enhance.js";
 
 const root = join(process.cwd(), "public");
 const port = Number(process.env.PORT || 3000);
@@ -2910,23 +2916,7 @@ async function handleGenerateArticle(req, res) {
 
 /* ── OpenAI — direct GPT Image enhance ──
    There is deliberately one model call and no intermediate upscaler,
-   vision-analysis pass, aspect-ratio conversion, or model fallback. Keeping
-   the source composition unchanged reduces unnecessary face reconstruction. */
-const IMAGE_ENHANCE_PROMPT = [
-  "Upscale and restore this exact real news photograph.",
-  "Preserve the original composition, crop, camera perspective, lighting, colours and background.",
-  "Preserve every person's exact identity, facial geometry, expression, age, pores, wrinkles, facial hair and natural skin texture.",
-  "Remove only compression artifacts and sensor noise; recover realistic photographic detail with restrained sharpening.",
-  "Do not smooth, airbrush, beautify, stylise, repaint or reconstruct skin. Avoid waxy, plastic, clay-like or illustrated faces.",
-  "Do not add, remove or move people or objects. Do not add text, logos, captions, watermarks or graphics.",
-  "Return a natural documentary photograph, not AI artwork.",
-].join("\n");
-
-// A direct comparison on a real news portrait found GPT Image 2 at high
-// quality retained the most natural facial texture. The edit endpoint rejects
-// input_fidelity for this model, so do not send that option.
-const GPT_IMAGE_ENHANCE_MODEL = "gpt-image-2";
-
+   vision-analysis pass, aspect-ratio conversion, or model fallback. */
 function openAIImageError(raw, status) {
   try {
     const parsed = JSON.parse(raw);
@@ -2938,12 +2928,6 @@ function openAIImageError(raw, status) {
   } catch {
     return { message: `OpenAI image ${status}`, code: "" };
   }
-}
-
-function imageSizeForOrientation(orientation) {
-  if (orientation === "landscape") return "1536x1024";
-  if (orientation === "portrait") return "1024x1536";
-  return "1024x1024";
 }
 
 async function handleUpscaleImage(req, res) {
@@ -2971,17 +2955,14 @@ async function handleUpscaleImage(req, res) {
       return;
     }
     const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
-    const orientation = (req.headers["x-image-orientation"] || "").toString();
-    const size = imageSizeForOrientation(orientation);
-    const quality = (env("IMAGE_QUALITY") || "high").toLowerCase();
     const model = GPT_IMAGE_ENHANCE_MODEL;
 
     const t0 = Date.now();
     const form = new FormData();
     form.append("model", model);
     form.append("prompt", IMAGE_ENHANCE_PROMPT);
-    form.append("size", size);
-    form.append("quality", quality);
+    form.append("size", GPT_IMAGE_ENHANCE_SIZE);
+    form.append("quality", GPT_IMAGE_ENHANCE_QUALITY);
     form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
     const aiRes = await fetch("https://api.openai.com/v1/images/edits", {
@@ -3009,8 +2990,13 @@ async function handleUpscaleImage(req, res) {
       return;
     }
 
-    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${model}, ${size}, quality=${quality})`);
-    sendJson(res, 200, { image: `data:image/png;base64,${b64}`, engine: model });
+    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${model}, framing=auto, detail=auto)`);
+    sendJson(res, 200, {
+      image: `data:image/png;base64,${b64}`,
+      engine: model,
+      framing: GPT_IMAGE_ENHANCE_SIZE,
+      detail: GPT_IMAGE_ENHANCE_QUALITY,
+    });
   } catch (err) {
     console.error("✗ upscale-image error:", err);
     sendJson(res, 500, { error: err.message || "Image enhance failed." });

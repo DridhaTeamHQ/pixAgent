@@ -3841,8 +3841,8 @@ if (aiEnhanceBtn) {
     setEnhanceStatus("Enhancing directly with GPT Image (30–90s)…");
 
     try {
-      // Send the source in its original aspect ratio. The model output size is
-      // chosen from this orientation; the poster handles cropping separately.
+      // Send the source in its original aspect ratio. GPT Image selects the
+      // output framing and detail automatically.
       const rawW = img.naturalWidth || img.width;
       const rawH = img.naturalHeight || img.height;
       const scale = Math.min(1, 1536 / Math.max(rawW, rawH));
@@ -3858,7 +3858,6 @@ if (aiEnhanceBtn) {
         method: "POST",
         headers: {
           "Content-Type": "image/png",
-          "X-Image-Orientation": rawW >= rawH ? "landscape" : "portrait",
         },
         body: blob,
       });
@@ -3880,7 +3879,7 @@ if (aiEnhanceBtn) {
       state.mainImage = enhanced;
       renderPoster();
       const engineLabel = data.engine || "GPT Image";
-      setEnhanceStatus(`✓ Enhanced via ${engineLabel}. Re-pick a stock image to undo.`, "success");
+      setEnhanceStatus(`✓ Enhanced via ${engineLabel} with auto framing + detail. Re-pick a stock image to undo.`, "success");
     } catch (err) {
       setEnhanceStatus(`Enhance failed: ${err.message}`, "error");
     } finally {

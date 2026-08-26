@@ -14,18 +14,18 @@ ffmpeg, and yt-dlp. Railway must use the Dockerfile build rather than Nixpacks.
 ## AI Enhance
 
 `POST /api/upscale-image` sends the source photograph directly to
-`gpt-image-2` using the OpenAI Images edit endpoint.
+`gpt-image-1.5` using the OpenAI Images edit endpoint.
 
-- The default `IMAGE_QUALITY` is `high` to retain natural photographic texture.
-- The output follows the source orientation; Pix handles poster cropping.
+- `size=auto` lets the model choose the most appropriate framing.
+- `quality=auto` lets the model choose the appropriate render detail.
 - The prompt explicitly preserves identity, pores, wrinkles, facial hair, and
   natural skin texture while rejecting waxy, plastic, or clay-like rendering.
 - There is no vision-analysis pass, Railway upscaler service, CodeFormer,
   Real-ESRGAN, SwinIR, aspect-ratio outpainting, or fallback image model.
 
 Each enhancement consumes OpenAI image credits. The Enhance route deliberately
-locks its model to the best result from portrait testing. It does not send
-`input_fidelity`, which GPT Image 2 rejects on the edit endpoint.
+locks the model and both automatic output settings so stale Railway variables
+cannot override the intended behavior.
 
 ## Environment variables
 
@@ -35,7 +35,6 @@ Set these on the Railway app service:
 |---|---|---|
 | `OPENAI_API_KEY` | **yes** | Article generation, captions, image analysis, and AI Enhance |
 | `SHORTLY_AGENT_AUTH_SECRET` | **yes** | Shortly Agents access gate; unset leaves the app open |
-| `IMAGE_QUALITY` | optional | GPT Image quality; defaults to `high` |
 | `YTDLP_COOKIES` | for protected video sources | Base64 cookies.txt from a throwaway account |
 | `YTDLP_PROXY` | optional | Residential proxy for video extraction |
 | `PEXELS_API_KEY` | optional | Stock images |
