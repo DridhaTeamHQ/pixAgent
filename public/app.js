@@ -218,7 +218,6 @@ const state = {
   headlineStyle: "half-purple",
   fontSize: 0, // 0 = auto
   overlayOpacity: 100,
-  enhanceStrength: 70,      // percent of the AI upscale to keep
   logoX: 810,
   logoY: 80,
   logoSize: 110,
@@ -3826,79 +3825,6 @@ if (copyAllBtn) {
 const aiEnhanceBtn    = document.getElementById("ai-enhance-btn");
 const aiEnhanceStatus = document.getElementById("ai-enhance-status");
 
-/* When the server points at the Pix Upscaler GPT, upscaling moves to the
-   user's own ChatGPT account: paste there, copy the result, paste it back
-   above. The built-in button is hidden rather than left disabled — a greyed
-   button invites clicking and explains nothing, whereas the steps say where
-   the work actually happens. The server refuses /api/upscale-image in this
-   mode too, so hiding the button is presentation, not the guard. */
-(function configureEnhanceRoute() {
-  const gptUrl = (window.PIX_CONFIG?.upscalerGptUrl || "").trim();
-  const external = document.getElementById("enhance-external");
-  const builtin  = document.getElementById("enhance-builtin");
-  const link     = document.getElementById("upscaler-gpt-link");
-  if (!gptUrl || !external || !builtin || !link) return;
-
-  link.href = gptUrl;
-  external.hidden = false;
-  builtin.hidden  = true;
-
-  /* Getting the photo TO the GPT is the part with no obvious answer: the
-     clipboard usually holds whatever was copied last (the article URL, most
-     often), so Ctrl+V over there pastes a link instead of an image. This puts
-     the actual background on the clipboard as a PNG. */
-  const copyBtn    = document.getElementById("copy-source-btn");
-  const copyStatus = document.getElementById("copy-source-status");
-  if (!copyBtn) return;
-
-  const setCopyStatus = (msg, kind) => {
-    if (!copyStatus) return;
-    copyStatus.className = "status-text" + (kind ? ` ${kind}` : "");
-    copyStatus.textContent = msg || "";
-  };
-
-  // Enabling is driven by the paint pass, alongside the AI Enhance button.
-  copyBtn.disabled = !state.mainImage;
-
-  copyBtn.addEventListener("click", async () => {
-    const img = state.mainImage;
-    if (!img) return;
-
-    // "working" is the flag the paint pass checks before re-enabling, so an
-    // in-flight copy is not undone by an unrelated repaint.
-    copyBtn.classList.add("working");
-    copyBtn.disabled = true;
-    setCopyStatus("Copying…");
-    try {
-      // Full resolution, not the preview size — the GPT should upscale from
-      // the best source available, and downscaling first would throw away
-      // exactly the detail we are asking it to recover.
-      const w = img.naturalWidth || img.width;
-      const h = img.naturalHeight || img.height;
-      const tmp = document.createElement("canvas");
-      tmp.width = w;
-      tmp.height = h;
-      tmp.getContext("2d").drawImage(img, 0, 0, w, h);
-
-      const blob = await new Promise((resolve, reject) => {
-        tmp.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not read the image."))), "image/png");
-      });
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-      setCopyStatus(`Copied at ${w}x${h}. Open Pix Upscaler and press Ctrl+V.`, "success");
-    } catch (err) {
-      // Clipboard image writes need a secure context and permission; if either
-      // is missing, say what to do instead rather than just failing.
-      setCopyStatus(
-        `Could not copy automatically (${err.message}). Right-click the preview and choose "Copy image", or download it and drag the file into Pix Upscaler.`,
-        "error",
-      );
-    } finally {
-      copyBtn.classList.remove("working");
-      copyBtn.disabled = !state.mainImage;
-    }
-  });
-})();
-
 function setEnhanceStatus(msg, kind) {
   if (!aiEnhanceStatus) return;
   aiEnhanceStatus.className = "status-text" + (kind ? ` ${kind}` : "");
@@ -3912,11 +3838,11 @@ if (aiEnhanceBtn) {
 
     aiEnhanceBtn.disabled = true;
     aiEnhanceBtn.classList.add("working");
-    setEnhanceStatus("Enhancing with AI — analysing photo, then rebuilding detail (30–90s)…");
+    setEnhanceStatus("Enhancing directly with GPT Image (30–90s)…");
 
     try {
-      // Snapshot the current background to a temp canvas, capped at 1536 on
-      // the long edge (gpt-image-1's max output — no point uploading more).
+      // Send the source in its original aspect ratio. The model output size is
+      // chosen from this orientation; the poster handles cropping separately.
       const rawW = img.naturalWidth || img.width;
       const rawH = img.naturalHeight || img.height;
       const scale = Math.min(1, 1536 / Math.max(rawW, rawH));
@@ -3933,17 +3859,6 @@ if (aiEnhanceBtn) {
         headers: {
           "Content-Type": "image/png",
           "X-Image-Orientation": rawW >= rawH ? "landscape" : "portrait",
-          // The selected poster ratio drives the generated image's shape —
-          // a 9:16 poster gets a portrait render (outpainted if needed).
-          "X-Poster-Ratio": state.aspectRatio || "",
-          // Story context helps the vision stage understand what the photo
-          // shows, which sharpens the "preserve exactly this" instructions.
-          "X-Headline": encodeURIComponent((state.headline || "").slice(0, 200)),
-          // How much of the model output to keep. Both upscalers manufacture
-          // roughly twice the fine detail the original had, which is what
-          // reads as a painted face; mixing back toward a plain resample is
-          // the dial for that.
-          "X-Enhance-Strength": String((state.enhanceStrength ?? 70) / 100),
         },
         body: blob,
       });
@@ -3961,11 +3876,7 @@ if (aiEnhanceBtn) {
       await ensureImageFocalPoint(enhanced);
       state.mainImage = enhanced;
       renderPoster();
-      const ENGINE_LABELS = {
-        realesrgan: "Real-ESRGAN (self-hosted, free)",
-        codeformer: "CodeFormer (self-hosted, free)",
-      };
-      const engineLabel = ENGINE_LABELS[data.engine] || data.engine || "AI";
+      const engineLabel = data.engine || "GPT Image";
       setEnhanceStatus(`✓ Enhanced via ${engineLabel}. Re-pick a stock image to undo.`, "success");
     } catch (err) {
       setEnhanceStatus(`Enhance failed: ${err.message}`, "error");
@@ -4676,20 +4587,3 @@ if (showTimestampInput) {
 
   scheduleNextMidnight();
 })();
-
-// Enhance strength — how much of the AI upscale to keep. Applies to the NEXT
-// enhance; it is a request parameter, not a canvas filter, so there is
-// nothing to re-render on change.
-const enhanceStrengthInput = document.getElementById("enhance-strength");
-const enhanceStrengthHint = document.getElementById("enhance-strength-hint");
-if (enhanceStrengthInput) {
-  const describe = (v) =>
-    v >= 90 ? `${v}% — full model output, sharpest but most artificial.`
-    : v >= 60 ? `${v}% — lower this if faces look painted or plastic.`
-    : v >= 25 ? `${v}% — mostly a clean resample, very natural.`
-    : `${v}% — essentially no AI enhancement.`;
-  enhanceStrengthInput.addEventListener("input", () => {
-    state.enhanceStrength = Number(enhanceStrengthInput.value);
-    if (enhanceStrengthHint) enhanceStrengthHint.textContent = describe(state.enhanceStrength);
-  });
-}

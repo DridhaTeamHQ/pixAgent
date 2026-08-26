@@ -1462,35 +1462,6 @@ body.view-article .edit-sheet { display: none !important; }
 .btn-ai.working .ai-spark { animation: spark-spin 1s linear infinite; display: inline-block; }
 @keyframes spark-spin { to { transform: rotate(360deg); } }
 
-/* The Pix Upscaler route is an <a>, not a <button>, so it needs the underline
-   removed — everything else it inherits from .btn-ai. */
-a.btn-ai { text-decoration: none; }
-
-/* Three steps that cross an app boundary and come back, so they are numbered:
-   the order is the instruction, and an unordered list would lose it. */
-.enhance-steps {
-  margin: 10px 0 6px;
-  padding-left: 20px;
-  list-style: decimal;
-  color: var(--text-secondary);
-  font-size: 0.76rem;
-  line-height: 1.55;
-}
-.enhance-steps li { margin-bottom: 3px; }
-.enhance-steps strong { color: var(--text-primary); font-weight: 600; }
-.enhance-steps kbd {
-  padding: 1px 5px;
-  border: 1px solid var(--hairline);
-  border-radius: 4px;
-  background: var(--sunken);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 0.9em;
-}
-
-/* The copy step comes before the GPT link, so it gets the gap instead. */
-#copy-source-btn { width: 100%; margin-top: 10px; }
-
 /* ─── Mobile bottom-sheet system ─────────────────────────────
    Desktop: .edit-sheet is invisible to layout (display:contents),
    .fab and .sheet-backdrop are fully hidden.

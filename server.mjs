@@ -66,7 +66,7 @@ function env(name, ...aliases) {
 
 // Warn loudly if a value needed cleaning — otherwise this silently papers
 // over a misconfiguration the user should fix at the source.
-for (const name of ["OPENAI_API_KEY", "UPSCALER_SECRET", "SHORTLY_AGENT_AUTH_SECRET", "PEXELS_API_KEY", "FAL_KEY"]) {
+for (const name of ["OPENAI_API_KEY", "SHORTLY_AGENT_AUTH_SECRET", "PEXELS_API_KEY", "FAL_KEY"]) {
   const raw = process.env[name] ?? secrets[name];
   if (raw != null && String(raw) !== env(name)) {
     console.warn(`⚠ ${name} had surrounding whitespace or quotes — trimmed. Fix it in the dashboard.`);
@@ -96,41 +96,7 @@ if (twitterClient) {
   console.warn("⚠ Twitter keys missing — /api/twitter/post will return 503.");
 }
 
-/* ── OpenAI (for AI tweet captions) ── */
-// Enhance routing. The self-hosted upscaler is free; gpt-image is not, and
-// it is only ever a fallback. DISABLE_GPT_IMAGE turns that fallback into a
-// hard error so a broken upscaler cannot quietly become a bill.
-const upscalerConfigured = Boolean(env("UPSCALER_URL"));
-const gptImageDisabled = /^(1|true|yes)$/i.test(env("DISABLE_GPT_IMAGE"));
-
-/* In-app AI Enhance is the active path: the button calls /api/upscale-image,
-   which prefers the self-hosted upscaler and falls back to gpt-image.
-
-   The hand-off to the Pix Upscaler GPT — user copies the image out, upscales
-   it on their OWN ChatGPT account, pastes the result back — is kept but is now
-   opt-in, because it costs this deployment nothing. Set UPSCALER_GPT_URL to
-   switch to it; the link below is the one to use:
-
-     UPSCALER_GPT_URL=https://chatgpt.com/g/g-6a798c3876bc8191b5bd3deae1b983f8-pix-upscaler
-
-   When set, the UI swaps to that flow and /api/upscale-image refuses outright
-   — hiding a button is not a spending control, since a stale tab or a direct
-   POST would still bill. */
-const PIX_UPSCALER_GPT_URL =
-  "https://chatgpt.com/g/g-6a798c3876bc8191b5bd3deae1b983f8-pix-upscaler";
-const upscalerGptSetting = env("UPSCALER_GPT_URL");
-const UPSCALER_GPT_URL = /^(on|1|true|yes)$/i.test(upscalerGptSetting)
-  ? PIX_UPSCALER_GPT_URL                      // shorthand for the standard GPT
-  : (/^(off|false|none|0)$/i.test(upscalerGptSetting) ? "" : upscalerGptSetting);
-
-if (UPSCALER_GPT_URL) {
-  console.log("✓ Upscaling delegated to the Pix Upscaler GPT — /api/upscale-image disabled, zero image spend");
-} else if (gptImageDisabled) {
-  console.log("\u2713 gpt-image fallback DISABLED — AI Enhance will only use the self-hosted upscaler");
-} else if (!upscalerConfigured) {
-  console.warn("\u26a0 No UPSCALER_URL — every AI Enhance will bill gpt-image (~$0.06 each).");
-}
-
+/* ── OpenAI ── */
 const openaiApiKey = env("OPENAI_API_KEY");
 if (openaiApiKey) {
   // Log a fingerprint, never the key. Prefix + length + last 4 is enough to
@@ -200,20 +166,7 @@ function withAssetVersion(html) {
     .replace(/(<link[^>]+href=")\.\/styles\.css(")/g, `$1./styles.css?v=${ASSET_V}$2`);
 }
 
-/* ── Runtime config handed to the browser ──
-   Inlined into <head> rather than fetched. A fetch would paint the built-in
-   enhance button first and swap it a moment later, and whichever one the user
-   clicked during that window would be the wrong one. Inlining means the very
-   first paint is already correct. */
-function withRuntimeConfig(html) {
-  // "</" inside a <script> would close the tag early, so escape it. A URL
-  // cannot realistically contain that, but the cost of being sure is one
-  // replace and the failure mode is a broken page.
-  const cfg = JSON.stringify({ upscalerGptUrl: UPSCALER_GPT_URL }).replace(/</g, "\\u003c");
-  return html.replace("</head>", `<script>window.PIX_CONFIG=${cfg};</script>\n</head>`);
-}
-
-const renderHtml = (html) => withRuntimeConfig(withAssetVersion(html));
+const renderHtml = (html) => withAssetVersion(html);
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/api/scrape") {
@@ -303,11 +256,7 @@ const server = http.createServer(async (req, res) => {
       uptime: Math.round(process.uptime()),
       features: {
         openai: Boolean(env("OPENAI_API_KEY")),
-        upscaler: upscalerConfigured,
-        gptImageFallback: !gptImageDisabled && !UPSCALER_GPT_URL,
-        // True means upscaling happens on the user's ChatGPT account and this
-        // deployment cannot spend image credits at all.
-        upscalerGpt: Boolean(UPSCALER_GPT_URL),
+        gptImageEnhance: Boolean(env("OPENAI_API_KEY")),
         // Video works when both binaries are on PATH; cookies are what make
         // YouTube reliable from a datacenter IP.
         ffmpeg: Boolean(ffmpegAvailable),
@@ -2959,159 +2908,28 @@ async function handleGenerateArticle(req, res) {
   }
 }
 
-/* ── OpenAI — context-aware, identity-preserving background enhance ──
-   Local-dev mirror of api/upscale-image.js. Two stages:
-     1. gpt-4o-mini vision describes the photo (people, faces, text, setting)
-     2. gpt-image-1 (quality=high, input_fidelity=high) enhances with that
-        description embedded so it knows what it must NOT change. */
+/* ── OpenAI — direct GPT Image enhance ──
+   There is deliberately one model call and no intermediate upscaler,
+   vision-analysis pass, aspect-ratio conversion, or model fallback. Keeping
+   the source composition unchanged gives input_fidelity=high the best chance
+   of preserving real faces instead of reconstructing them. */
+const IMAGE_ENHANCE_PROMPT = [
+  "Upscale and restore this exact real news photograph.",
+  "Preserve the original composition, crop, camera perspective, lighting, colours and background.",
+  "Preserve every person's exact identity, facial geometry, expression, age, pores, wrinkles, facial hair and natural skin texture.",
+  "Remove only compression artifacts and sensor noise; recover realistic photographic detail with restrained sharpening.",
+  "Do not smooth, airbrush, beautify, stylise, repaint or reconstruct skin. Avoid waxy, plastic, clay-like or illustrated faces.",
+  "Do not add, remove or move people or objects. Do not add text, logos, captions, watermarks or graphics.",
+  "Return a natural documentary photograph, not AI artwork.",
+].join("\n");
 
-// This description is embedded in the image-generation prompt, so anything
-// it quotes is at risk of being RENDERED into the photo. It therefore
-// describes where text sits without reproducing the words — enough for the
-// model to know a sign is there and leave it alone, without handing it a
-// string to draw.
-const VISION_PROMPT =
-  "You are assisting a photo-restoration pipeline for a news organisation. " +
-  "Describe this photograph in 2-4 sentences, factually and precisely: the people " +
-  "(count, apparent age, facial hair, glasses, expressions, clothing), the setting, " +
-  "and the lighting. If text, logos or signage appear, say only WHERE they are and " +
-  "how large (for example 'a sponsor banner across the back wall') — do NOT transcribe " +
-  "or quote the words themselves. " +
-  "Do NOT guess names. Output only the description.";
-
-// The headline is deliberately NOT given to the image model.
-//
-// Image models treat a quoted string in the prompt as text to RENDER, so
-// `It accompanies this news story: "<headline>"` reliably produced photos
-// with the headline burned into them. The renderer already draws the
-// headline on the canvas — the model never needs to know it.
-function buildEnhancePrompt(description, _headlineNotUsed, ratioLabel) {
-  return [
-    "Professional photo restoration of a REAL news photograph.",
-    description ? `CONTEXT — the photo shows: ${description}` : "",
-    "",
-    "TASK: upscale and enhance — recover fine detail, increase sharpness,",
-    "remove compression artifacts and noise, correct exposure and colour balance.",
-    ratioLabel
-      ? `The output canvas is ${ratioLabel}. If the original photo has a different shape, EXTEND the scene naturally (continue the background/setting) to fill the ${ratioLabel} frame — keep the main subject fully visible, at the same relative scale, never cropped, stretched or distorted.`
-      : "",
-    "",
-    "ABSOLUTE RULES:",
-    "- Every person's face must stay PIXEL-FAITHFUL to the original identity:",
-    "  same facial structure, skin texture, wrinkles, expression and age.",
-    "  Do NOT beautify, smooth skin, or idealise anyone.",
-    "- DO NOT ADD ANY TEXT OR GRAPHICS. No headline, caption, title, label,",
-    "  subtitle, watermark, banner, lower-third or logo. Write no words",
-    "  anywhere in the image.",
-    "- Text physically present in the photograph (signage, jerseys, banners",
-    "  held by people) is preserved exactly as it already appears — never",
-    "  invented, completed, translated or extended.",
-    "- The original content itself is unchanged — only the surrounding scene",
-    "  may be extended to fill the frame. Add no new people or objects of",
-    "  interest. This is journalism, not art.",
-    "",
-    "The result is a clean photograph with no added lettering or graphics.",
-  ].filter(Boolean).join("\n");
-}
-
-// Map the poster's aspect ratio to the closest gpt-image output size.
-function sizeForRatio(ratio, orientationHint) {
-  switch (ratio) {
-    case "9:16":
-    case "4:5":  return "1024x1536";
-    case "1:1":  return "1024x1024";
-    case "16:9": return "1536x1024";
-  }
-  if (orientationHint === "landscape") return "1536x1024";
-  if (orientationHint === "portrait")  return "1024x1536";
-  return "auto";
-}
-
-async function describeImageForEnhance(buffer, mime) {
-  try {
-    const dataUrl = `data:${mime};base64,${buffer.toString("base64")}`;
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${openaiApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [{
-          role: "user",
-          content: [
-            { type: "text", text: VISION_PROMPT },
-            { type: "image_url", image_url: { url: dataUrl, detail: "low" } },
-          ],
-        }],
-        temperature: 0.2,
-        max_tokens: 220,
-      }),
-    });
-    if (!r.ok) {
-      console.warn(`⚠ vision describe failed (${r.status}) — enhancing without context`);
-      return "";
-    }
-    const data = await r.json();
-    return (data?.choices?.[0]?.message?.content || "").trim();
-  } catch (e) {
-    console.warn("⚠ vision describe error — enhancing without context:", e.message);
-    return "";
-  }
-}
-
-// Primary engine: the self-hosted CodeFormer + Real-ESRGAN service on Railway
-// (pixel-faithful, never regenerates faces). Returns a PNG data URL, or null
-// if the service isn't configured / errors / times out — caller then falls
-// back to gpt-image-1.5.
-async function tryRailwayUpscale(buffer, mime, strength) {
-  const base = (env("UPSCALER_URL")).replace(/\/+$/, "");
-  if (!base) return null;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 285000);
-  try {
-    const r = await fetch(`${base}/enhance`, {
-      method: "POST",
-      headers: {
-        "Content-Type": mime,
-        "X-Secret": env("UPSCALER_SECRET"),
-        // How much of the model output to keep. Passed through from the
-        // client so the slider is live, rather than baked in per deploy.
-        ...(strength ? { "X-Enhance-Strength": String(strength) } : {}),
-      },
-      body: buffer,
-      signal: ctrl.signal,
-    });
-    if (!r.ok) {
-      console.warn(`⚠ Railway upscaler ${r.status} — falling back to gpt-image`);
-      return null;
-    }
-    const out = Buffer.from(await r.arrayBuffer());
-    if (out.length < 1000) return null;
-    return {
-      dataUrl: `data:image/png;base64,${out.toString("base64")}`,
-      engine: r.headers.get("x-engine") || "railway",
-    };
-  } catch (e) {
-    console.warn("⚠ Railway upscaler unreachable — falling back to gpt-image:", e.message);
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+function imageSizeForOrientation(orientation) {
+  if (orientation === "landscape") return "1536x1024";
+  if (orientation === "portrait") return "1024x1536";
+  return "1024x1024";
 }
 
 async function handleUpscaleImage(req, res) {
-  // Upscaling is the user's own ChatGPT session now. Refuse before reading the
-  // body: this route is the single place image credits could ever be spent, so
-  // the guard belongs here and not only in the UI that hides the button.
-  if (UPSCALER_GPT_URL) {
-    sendJson(res, 503, {
-      error: "In-app enhancing is off. Upscale your image in the Pix Upscaler GPT, then paste the result back here.",
-      upscalerGptUrl: UPSCALER_GPT_URL,
-    });
-    return;
-  }
   if (!openaiApiKey) {
     sendJson(res, 503, { error: "OPENAI_API_KEY not set on server." });
     return;
@@ -3136,82 +2954,29 @@ async function handleUpscaleImage(req, res) {
       return;
     }
     const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
-    const headline = decodeURIComponent(req.headers["x-headline"] || "").trim().slice(0, 200);
-
-    // PRIMARY: self-hosted upscaler on Railway (pixel-faithful).
-    const railwayT0 = Date.now();
-    const strength = (req.headers["x-enhance-strength"] || "").toString();
-    const railway = await tryRailwayUpscale(buffer, mime, strength);
-    if (railway) {
-      console.log(`✓ AI enhance via Railway (${railway.engine}) in ${Date.now() - railwayT0}ms`);
-      sendJson(res, 200, { image: railway.dataUrl, engine: railway.engine });
-      return;
-    }
-    // The paid fallback is opt-out. Without this guard a momentary failure of
-    // the self-hosted upscaler silently spends OpenAI credits — the caller
-    // still gets an enhanced image, so nothing looks wrong until the bill
-    // arrives. Set DISABLE_GPT_IMAGE=true to make that spend impossible and
-    // surface the real problem instead.
-    if (gptImageDisabled) {
-      console.warn("⚠ upscaler unavailable and DISABLE_GPT_IMAGE is set — refusing to spend OpenAI credits");
-      sendJson(res, 503, {
-        error: upscalerConfigured
-          ? "The self-hosted upscaler did not respond, and the paid gpt-image fallback is disabled (DISABLE_GPT_IMAGE). Check that the upscaler service is running."
-          : "No upscaler is configured (UPSCALER_URL unset) and the paid gpt-image fallback is disabled (DISABLE_GPT_IMAGE).",
-      });
-      return;
-    }
-
-    // else fall through to gpt-image-1.5 ↓
-
-    // The SELECTED POSTER RATIO drives the output size, so a 9:16 poster
-    // gets a portrait image (outpainted if the source is landscape) instead
-    // of a landscape image that the canvas then crops to shreds.
-    const posterRatio = (req.headers["x-poster-ratio"] || "").toString();
-    const sizeHint = (req.headers["x-image-orientation"] || "").toString();
-    const size = sizeForRatio(posterRatio, sizeHint);
-
-    // Default medium: input_fidelity=high (kept) does the face preservation;
-    // quality mostly buys texture. high≈$0.25, medium≈$0.06, low≈$0.016.
-    const quality = (process.env.IMAGE_QUALITY || "medium").toLowerCase();
+    const orientation = (req.headers["x-image-orientation"] || "").toString();
+    const size = imageSizeForOrientation(orientation);
+    const quality = (env("IMAGE_QUALITY") || "high").toLowerCase();
+    const model = env("GPT_IMAGE_MODEL") || "gpt-image-1.5";
 
     const t0 = Date.now();
+    const form = new FormData();
+    form.append("model", model);
+    form.append("prompt", IMAGE_ENHANCE_PROMPT);
+    form.append("size", size);
+    form.append("quality", quality);
+    form.append("input_fidelity", "high");
+    form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
-    // Stage 1 — understand the image (cheap, fails soft)
-    const description = await describeImageForEnhance(buffer, mime);
-    if (description) console.log(`✓ vision context (${Date.now() - t0}ms): ${description.slice(0, 140)}…`);
-
-    // Stage 2 — context-aware enhancement.
-    // gpt-image-1.5 first; automatic fallback to gpt-image-1 if the account
-    // doesn't have the newer model.
-    const prompt = buildEnhancePrompt(description, headline, posterRatio);
-    const callEdit = async (model) => {
-      const form = new FormData();
-      form.append("model", model);
-      form.append("prompt", prompt);
-      form.append("size", size);
-      form.append("quality", quality);
-      form.append("input_fidelity", "high");   // OpenAI's face/identity preservation control
-      form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
-      return fetch("https://api.openai.com/v1/images/edits", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${openaiApiKey}` },
-        body: form,
-      });
-    };
-
-    let modelUsed = "gpt-image-1.5";
-    let aiRes = await callEdit(modelUsed);
-    if (!aiRes.ok && [400, 403, 404].includes(aiRes.status)) {
-      const firstErr = await aiRes.text().catch(() => "");
-      console.warn(`⚠ gpt-image-1.5 unavailable (${aiRes.status}) — falling back to gpt-image-1:`, firstErr.slice(0, 160));
-      modelUsed = "gpt-image-1";
-      aiRes = await callEdit(modelUsed);
-    }
+    const aiRes = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${openaiApiKey}` },
+      body: form,
+    });
 
     if (!aiRes.ok) {
       const errText = await aiRes.text().catch(() => "");
-      console.error(`✗ ${modelUsed} ${aiRes.status}:`, errText.slice(0, 400));
+      console.error(`✗ ${model} ${aiRes.status}:`, errText.slice(0, 400));
       sendJson(res, 502, { error: `OpenAI image ${aiRes.status}`, detail: errText.slice(0, 300) });
       return;
     }
@@ -3223,8 +2988,8 @@ async function handleUpscaleImage(req, res) {
       return;
     }
 
-    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${modelUsed}, ${size}, quality=${quality})`);
-    sendJson(res, 200, { image: `data:image/png;base64,${b64}`, context: description, engine: modelUsed });
+    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${model}, ${size}, quality=${quality})`);
+    sendJson(res, 200, { image: `data:image/png;base64,${b64}`, engine: model });
   } catch (err) {
     console.error("✗ upscale-image error:", err);
     sendJson(res, 500, { error: err.message || "Image enhance failed." });

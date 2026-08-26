@@ -404,44 +404,12 @@
                different column entirely. -->
           <p id="bg-upload-status" class="status-text" role="status" aria-live="polite"></p>
 
-          <!-- Two upscaling routes, one shown at a time. The server decides
-               which by setting (or not setting) UPSCALER_GPT_URL. -->
-
-          <!-- Route A: the Pix Upscaler GPT. Runs on the user's own ChatGPT
-               account, so it costs this deployment nothing. -->
-          <div id="enhance-external" hidden>
-            <!-- Copy first, THEN open the GPT. Without this the user arrives
-                 with whatever was last on their clipboard — typically the
-                 article URL — and Ctrl+V pastes a link, not the photo. -->
-            <button type="button" id="copy-source-btn" class="btn-secondary upload-action-btn" disabled>
-              Copy image for upscaling
-            </button>
-            <a id="upscaler-gpt-link" class="btn-ai" href="#" target="_blank" rel="noopener noreferrer">
-              <svg class="ai-spark" width="14" height="14" aria-hidden="true"><use href="#i-spark"/></svg>
-              Open Pix Upscaler
-            </a>
-            <ol class="enhance-steps">
-              <li><strong>Copy image</strong> above — this puts the photo on your clipboard.</li>
-              <li>Open <strong>Pix Upscaler</strong> and press <kbd>Ctrl</kbd>+<kbd>V</kbd> to paste it.</li>
-              <li>Copy the upscaled result it gives back.</li>
-              <li>Return here, hit <strong>Paste image</strong> (press <kbd>Ctrl</kbd>+<kbd>V</kbd> if it asks) — then download your poster.</li>
-            </ol>
-            <small class="helper-text">Free — it runs on your own ChatGPT account, not on Pix credits.</small>
-            <p id="copy-source-status" class="status-text" role="status" aria-live="polite"></p>
-          </div>
-
-          <!-- Route B: in-app enhance via the self-hosted upscaler. -->
           <div id="enhance-builtin">
             <button type="button" id="ai-enhance-btn" class="btn-ai" disabled>
               <svg class="ai-spark" width="14" height="14" aria-hidden="true"><use href="#i-spark"/></svg>
               AI Enhance Image
             </button>
-            <label class="slider-container" style="margin-top:10px;">
-              <span class="slider-label">Strength</span>
-              <input type="range" id="enhance-strength" min="0" max="100" step="5" value="70" />
-            </label>
-            <small class="helper-text" id="enhance-strength-hint">70% — lower this if faces look painted or plastic.</small>
-            <small class="helper-text">Uses paid AI credits (~$0.034 per enhance). Runs only when you click.</small>
+            <small class="helper-text">Uses GPT Image with high input fidelity and natural-skin preservation. Runs only when you click.</small>
           </div>
           <p id="ai-enhance-status" class="status-text" role="status" aria-live="polite"></p>
 
