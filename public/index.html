@@ -405,13 +405,15 @@
           <p id="bg-upload-status" class="status-text" role="status" aria-live="polite"></p>
 
           <div id="enhance-builtin">
+            <label class="helper-text"><input type="checkbox" id="image-is-map" /> Map / diagram / annotated screenshot</label>
             <button type="button" id="ai-enhance-btn" class="btn-ai" disabled>
               <svg class="ai-spark" width="14" height="14" aria-hidden="true"><use href="#i-spark"/></svg>
               AI Enhance Image
             </button>
-            <small class="helper-text">GPT Image 2 gently restores the photo, then Pix zooms and reframes it for the selected poster. Runs only when you click.</small>
+            <small class="helper-text">GPT Image 2 restores detail in the original composition. Poster crop and zoom stay in Pix. Review AI results for changed details; exact preservation is not guaranteed.</small>
           </div>
           <p id="ai-enhance-status" class="status-text" role="status" aria-live="polite"></p>
+          <button type="button" id="ai-image-undo-btn" class="btn-secondary" hidden>Undo AI image change</button>
 
           <div id="stock-images-section" class="acc-subgroup" hidden>
             <h3 class="acc-subtitle">Stock Backgrounds</h3>
@@ -429,8 +431,12 @@
         <div class="acc-body"><div class="acc-inner">
           <label class="slider-container">
             <span class="slider-label">Zoom</span>
-            <input type="range" id="img-zoom" min="10" max="300" value="100" />
+            <input type="range" id="img-zoom" min="100" max="300" value="100" aria-describedby="image-zoom-help" />
           </label>
+          <small id="image-zoom-help" class="helper-text">100% shows the widest crop that fills this poster. Need more room? Extend the photo with AI instead of shrinking it over a duplicate background.</small>
+          <button type="button" id="ai-extend-btn" class="btn-secondary" disabled>Extend image with AI</button>
+          <small class="helper-text">Reveals the full uploaded photo and generates new surroundings. Disabled for maps and diagrams. Uses paid GPT Image credits only when clicked. Review generated areas before publishing.</small>
+          <p id="ai-extend-status" class="status-text" role="status" aria-live="polite"></p>
           <label class="slider-container">
             <span class="slider-label">Pan X</span>
             <input type="range" id="img-offset-x" min="-900" max="900" value="0" />

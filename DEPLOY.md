@@ -16,18 +16,46 @@ ffmpeg, and yt-dlp. Railway must use the Dockerfile build rather than Nixpacks.
 `POST /api/upscale-image` sends the source photograph directly to
 `gpt-image-2` using the OpenAI Images edit endpoint.
 
-- The selected Pix aspect maps to an exact output canvas, so the model crops
-  and modestly zooms for the real poster instead of guessing its destination.
+- Enhancement output proportions come from the actual PNG/JPEG source, never
+  the poster aspect. Dimensions are rounded to GPT Image's 16-pixel grid and
+  kept near 1.8 MP (at most 2 MP). Ratios beyond 3:1 / 1:3 are rejected instead
+  of silently changing the composition. Legacy `X-Poster-Aspect` is ignored.
 - High-quality output is used with a conservative prompt that explicitly
   forbids invented pores, skin grain, beard hairs, micro-contrast, and halos.
-- Pix resets stale pan/zoom and centres the enhanced face or subject using its
-  existing focal-point framing.
+- The prompt forbids reframing, outpainting, inset copies and duplicated scenes.
+  Pix retains the existing zoom, pan and normalized focal point after enhancement.
+  An output aspect change greater than 1% is rejected, as are old server replies
+  that do not declare the new source-preserving request contract. This checks
+  dimensions, not visual content; GPT can still alter details, so review/undo
+  remains necessary.
+- Mark maps, diagrams and annotated screenshots with the image-type checkbox.
+  It enables factual-layout guidance and blocks extension in the UI and API.
+  It is a manual classification, not automatic map detection.
 - There is no vision-analysis pass, Railway upscaler service, CodeFormer,
   Real-ESRGAN, SwinIR, aspect-ratio outpainting, or fallback image model.
 
 Each enhancement consumes OpenAI image credits. The Enhance route deliberately
 locks the model and quality so stale Railway variables cannot override the
 intended behavior.
+
+## Zoom and image extension
+
+- Ordinary zoom stops at 100%: the widest crop that still covers the poster.
+  Older zoom values below 100% are clamped when rendered. Both poster and text
+  preview draw a single image; neither uses a duplicate photo to fill gaps.
+- **Extend image with AI** calls `POST /api/extend-image` separately and only
+  on click. It fits the entire current source photo into 85% of the selected
+  output canvas and asks GPT Image to outpaint the surrounding margins.
+- A same-size alpha mask marks the source as protected and the margins as
+  editable. No poster text, logo, filters or composited backdrop is sent.
+  Mask guidance is not a pixel-perfect guarantee: review the result, especially
+  faces and newly generated surroundings, before publishing a news image.
+- The returned image replaces the previous one as a single layer. Undo restores
+  the previous image and crop. Failed or stale requests never replace it.
+- This uses the existing OpenAI key and model, not another upscaler or service.
+  Railway and the legacy serverless route share the same extension handler.
+- Map/diagram mode blocks this action before an OpenAI call. Generating extra
+  terrain, roads or labels is not an acceptable way to expand a factual map.
 
 ## Environment variables
 
@@ -75,7 +103,7 @@ The response should include:
 }
 ```
 
-Then test a scrape, article generation, AI Enhance, and video export.
+Then test a scrape, article generation, AI Enhance, image extension/undo, and video export.
 
 ## Local development
 

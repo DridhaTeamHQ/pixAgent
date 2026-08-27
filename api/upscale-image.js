@@ -2,16 +2,14 @@
 //
 // One request goes straight from the source photograph to gpt-image-2.
 // There is no separate vision pass, self-hosted upscaler, outpainting step,
-// or model fallback. Pix supplies the target poster aspect for framing.
+// or model fallback. Source dimensions set the output aspect; Pix crops later.
 
 import { readRawBody } from "../lib/http.js";
 import {
   GPT_IMAGE_ENHANCE_MODEL,
   GPT_IMAGE_ENHANCE_QUALITY,
-  imageEnhancePromptForAspect,
-  imageEnhanceSizeForAspect,
-  normalizePosterAspect,
 } from "../lib/ai-enhance.js";
+import { imageEnhanceForm } from "../lib/image-enhancement.js";
 
 export const config = {
   api: {
@@ -49,22 +47,8 @@ export default async function handler(req, res) {
 
   try {
     const buffer = await readRawBody(req, 10 * 1024 * 1024);
-    if (buffer.length < 1000) {
-      res.status(400).json({ error: "Empty or invalid image body." });
-      return;
-    }
-
-    const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
-    const posterAspect = normalizePosterAspect((req.headers["x-poster-aspect"] || "").toString());
-    const outputSize = imageEnhanceSizeForAspect(posterAspect);
+    const { form, source, outputSize, imageKind } = imageEnhanceForm(buffer, req.headers["x-image-kind"]);
     const model = GPT_IMAGE_ENHANCE_MODEL;
-
-    const form = new FormData();
-    form.append("model", model);
-    form.append("prompt", imageEnhancePromptForAspect(posterAspect));
-    form.append("size", outputSize);
-    form.append("quality", GPT_IMAGE_ENHANCE_QUALITY);
-    form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
     const startedAt = Date.now();
     const aiRes = await fetch("https://api.openai.com/v1/images/edits", {
@@ -92,17 +76,19 @@ export default async function handler(req, res) {
       return;
     }
 
-    console.log(`AI enhance done in ${Date.now() - startedAt}ms (${model}, aspect=${posterAspect}, size=${outputSize}, quality=${GPT_IMAGE_ENHANCE_QUALITY})`);
+    console.log(`AI enhance done in ${Date.now() - startedAt}ms (${model}, source=${source.width}x${source.height}, size=${outputSize}, quality=${GPT_IMAGE_ENHANCE_QUALITY})`);
     res.status(200).json({
       image: `data:image/png;base64,${b64}`,
       engine: model,
-      framing: "poster-aware",
-      aspect: posterAspect,
+      framing: "source-preserved",
+      sourceWidth: source.width,
+      sourceHeight: source.height,
+      imageKind,
       outputSize,
       detail: GPT_IMAGE_ENHANCE_QUALITY,
     });
   } catch (err) {
     console.error("upscale-image error:", err);
-    res.status(500).json({ error: err.message || "Image enhance failed." });
+    res.status(err.status || 500).json({ error: err.message || "Image enhance failed." });
   }
 }

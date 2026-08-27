@@ -67,7 +67,6 @@ const PREVIEW_TEXT_WEIGHT = 700;
 const PREVIEW_TEXT_FONT = "'Poppins', 'Segoe UI', Arial, sans-serif";
 
 const IMAGE_PAN_LIMIT = 900;
-const IMAGE_PAN_HEADROOM = 1.1;
 
 /**
  * Render the poster onto an offscreen canvas at `scale`× the design size and
@@ -215,6 +214,9 @@ const state = {
   ready: false,
   imageOffset: { x: 0, y: 0 },
   imageZoom: 100,
+  imageEditBusy: false,
+  imageEditUndo: null,
+  imageKind: "photo",
   headlineStyle: "half-purple",
   fontSize: 0, // 0 = auto
   overlayOpacity: 100,
@@ -1083,7 +1085,7 @@ if (filterPresetsContainer) {
 
 // Zoom slider
 imgZoom.addEventListener("input", () => {
-  const nextZoom = Number(imgZoom.value);
+  const nextZoom = normalizeImageZoom(Number(imgZoom.value));
   if (nextZoom < state.imageZoom) {
     state.imageOffset = { x: 0, y: 0 };
     imgOffsetX.value = 0;
@@ -2075,6 +2077,10 @@ function paintCardInto(target, mode) {
 }
 
 function renderPoster() {
+  // Old drafts can contain zoom values below the photo's coverage limit.
+  state.imageZoom = normalizeImageZoom(state.imageZoom);
+  imgZoom.value = state.imageZoom;
+  syncImageActionButtons();
   // Export paths swap ctx themselves and want a single paint.
   if (state._targetedRender) { paintPoster(); return; }
   for (const card of PREVIEW_CARDS) paintCardInto(card.canvas, card.mode);
@@ -2114,11 +2120,6 @@ function paintPoster() {
     drawNavBar();
   }
 
-  // AI Enhance is only meaningful once a real background image is loaded
-  const enhanceBtn = document.getElementById("ai-enhance-btn");
-  if (enhanceBtn && !enhanceBtn.classList.contains("working")) {
-    enhanceBtn.disabled = !state.mainImage;
-  }
   // Same rule for "Copy image for upscaling" — nothing to copy without one.
   const copySrcBtn = document.getElementById("copy-source-btn");
   if (copySrcBtn && !copySrcBtn.classList.contains("working")) {
@@ -2521,33 +2522,13 @@ function drawTextPreviewBackgroundImage(image, x, y, width, height, offset, zoom
   const drawY = y - bleed;
   const drawW = width + bleed * 2;
   const drawH = height + bleed * 2;
-  const baseScale = Math.max(drawW / image.width, drawH / image.height);
-  const imageScale = baseScale * (zoom || 1) * IMAGE_PAN_HEADROOM;
-  const drawWidth = image.width * imageScale;
-  const drawHeight = image.height * imageScale;
-  const focal = image.__focalPoint || { x: image.width / 2, y: image.height / 2 };
+  const placement = getCoverImagePlacement(image, drawX, drawY, drawW, drawH, offset, zoom);
 
   ctx.save();
   ctx.filter = `blur(${Math.round(18 * scale)}px) brightness(62%) contrast(108%) saturate(72%)`;
-  drawBlurredCoverLayer(null);
-  drawBlurredCoverLayer(offset);
+  // One continuous image, not two displaced copies of the same face.
+  ctx.drawImage(image, placement.x, placement.y, placement.width, placement.height);
   ctx.restore();
-
-  function drawBlurredCoverLayer(layerOffset) {
-    let dx = drawX + drawW / 2 - focal.x * imageScale;
-    let dy = drawY + drawH / 2 - focal.y * imageScale;
-
-    if (layerOffset) {
-      dx += layerOffset.x;
-      dy += layerOffset.y;
-    }
-
-    const minX = drawX + drawW - drawWidth;
-    const minY = drawY + drawH - drawHeight;
-    dx = clamp(dx, minX, drawX);
-    dy = clamp(dy, minY, drawY);
-    ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
-  }
 }
 
 function drawTextPreviewLogo(x, y, size) {
@@ -3375,9 +3356,15 @@ function compressLines(lines, maxLines) {
 
 /* ── Cover Image Drawing ── */
 
-function drawCoverImage(image, x, y, width, height, offset, zoom) {
+function normalizeImageZoom(value) {
+  return Number.isFinite(value) ? clamp(value, 100, 300) : 100;
+}
+
+function getCoverImagePlacement(image, x, y, width, height, offset, zoom) {
   const baseScale = Math.max(width / image.width, height / image.height);
-  const scale = baseScale * (zoom || 1) * IMAGE_PAN_HEADROOM;
+  // Zoom can reveal existing pixels, but cannot create pixels outside the
+  // photo. Never underfill the frame or use a duplicate backdrop to hide it.
+  const scale = baseScale * normalizeImageZoom(zoom * 100) / 100;
   const drawWidth = image.width * scale;
   const drawHeight = image.height * scale;
   const focal = image.__focalPoint || { x: image.width / 2, y: image.height / 2 };
@@ -3395,12 +3382,18 @@ function drawCoverImage(image, x, y, width, height, offset, zoom) {
   dx = clamp(dx, minX, x);
   dy = clamp(dy, minY, y);
 
+  return { x: dx, y: dy, width: drawWidth, height: drawHeight };
+}
+
+function drawCoverImage(image, x, y, width, height, offset, zoom) {
+  const placement = getCoverImagePlacement(image, x, y, width, height, offset, zoom);
+
   // Apply filters (brightness/contrast/saturation/blur) only to the image
   // layer — gradient, headline, logo, etc. should NOT be filtered. Reset to
   // "none" immediately after the draw so subsequent layers render normally.
   ctx.save();
   ctx.filter = buildFilterString();
-  ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
+  ctx.drawImage(image, placement.x, placement.y, placement.width, placement.height);
   ctx.restore();
 }
 
@@ -3825,6 +3818,158 @@ if (copyAllBtn) {
 const aiEnhanceBtn    = document.getElementById("ai-enhance-btn");
 const aiEnhanceStatus = document.getElementById("ai-enhance-status");
 
+function syncImageActionButtons() {
+  for (const id of ["ai-enhance-btn", "ai-extend-btn"]) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = !state.mainImage || state.imageEditBusy ||
+      (id === "ai-extend-btn" && state.imageKind === "map");
+  }
+  const mapInput = document.getElementById("image-is-map");
+  if (mapInput) {
+    mapInput.checked = state.imageKind === "map";
+    mapInput.disabled = state.imageEditBusy;
+  }
+  const undo = document.getElementById("ai-image-undo-btn");
+  if (undo) {
+    undo.hidden = !state.imageEditUndo || state.imageEditUndo.result !== state.mainImage;
+    undo.disabled = state.imageEditBusy;
+  }
+}
+
+document.getElementById("image-is-map")?.addEventListener("change", event => {
+  state.imageKind = event.target.checked ? "map" : "photo";
+  setExtendStatus(state.imageKind === "map"
+    ? "AI extension is disabled for maps and diagrams to avoid inventing factual content."
+    : "");
+  syncImageActionButtons();
+});
+
+function imageEditSnapshot() {
+  return {
+    image: state.mainImage, aspect: state.aspectRatio,
+    nonce: state.imageSelectionNonce, zoom: state.imageZoom,
+    offset: { ...state.imageOffset },
+    imageKind: state.imageKind || "photo",
+  };
+}
+
+function isCurrentImageEdit(snapshot) {
+  return state.mainImage === snapshot.image && state.aspectRatio === snapshot.aspect &&
+    (state.imageKind || "photo") === snapshot.imageKind &&
+    state.imageSelectionNonce === snapshot.nonce && state.imageZoom === snapshot.zoom &&
+    state.imageOffset.x === snapshot.offset.x && state.imageOffset.y === snapshot.offset.y;
+}
+
+function applyAIImageResult(image, snapshot, preserveFraming = false) {
+  if (!isCurrentImageEdit(snapshot)) {
+    throw new Error("Image or framing changed while AI was working. Result not applied; try again with the current photo.");
+  }
+  if (preserveFraming) {
+    const source = snapshot.image;
+    const ratioChange = Math.abs((image.width / image.height) / (source.width / source.height) - 1);
+    if (!Number.isFinite(ratioChange) || ratioChange > 0.01) {
+      throw new Error("AI changed the image proportions. Result not applied; your original is unchanged.");
+    }
+    // Keep the original focal point in normalized coordinates. Running face
+    // detection again would move the crop even if GPT preserved the scene.
+    const focal = source.__focalPoint || { x: source.width / 2, y: source.height / 2 };
+    image.__focalPoint = { x: focal.x / source.width * image.width, y: focal.y / source.height * image.height };
+  }
+  claimImageSelection();
+  state.imageEditUndo = { ...snapshot, result: image };
+  state.mainImage = image;
+  if (!preserveFraming) resetImageControls();
+  renderPoster();
+}
+
+document.getElementById("ai-image-undo-btn")?.addEventListener("click", () => {
+  const previous = state.imageEditUndo;
+  if (state.imageEditBusy || !previous || previous.result !== state.mainImage) return;
+  claimImageSelection();
+  state.mainImage = previous.image;
+  state.imageKind = previous.imageKind;
+  resetImageControls();
+  if (state.aspectRatio === previous.aspect) {
+    state.imageZoom = normalizeImageZoom(previous.zoom);
+    state.imageOffset = { ...previous.offset };
+    imgOffsetX.value = state.imageOffset.x;
+    imgOffsetY.value = state.imageOffset.y;
+  }
+  state.imageEditUndo = null;
+  setEnhanceStatus("AI image change undone.", "success");
+  setExtendStatus("AI image change undone.", "success");
+  renderPoster();
+});
+
+// The source is fitted whole into a larger canvas. Empty margins are sent
+// to GPT Image for outpainting, never used as a fake on-screen backdrop.
+function getImageExtensionPlacement(image, width, height) {
+  const scale = Math.min(width / image.width, height / image.height) * 0.85;
+  const drawWidth = Math.round(image.width * scale);
+  const drawHeight = Math.round(image.height * scale);
+  return {
+    x: Math.floor((width - drawWidth) / 2), y: Math.floor((height - drawHeight) / 2),
+    width: drawWidth, height: drawHeight,
+  };
+}
+
+function createImageExtensionInput(image, aspect, imageKind = "photo") {
+  const sizes = { "9:16": [1008, 1792], "4:5": [1024, 1280], "1:1": [1024, 1024], "16:9": [1792, 1008] };
+  const [width, height] = sizes[aspect] || sizes["9:16"];
+  const source = document.createElement("canvas");
+  const mask = document.createElement("canvas");
+  source.width = mask.width = width;
+  source.height = mask.height = height;
+  const placement = getImageExtensionPlacement(image, width, height);
+  const sourceCtx = source.getContext("2d");
+  sourceCtx.fillStyle = "#808080";
+  sourceCtx.fillRect(0, 0, width, height);
+  sourceCtx.drawImage(image, placement.x, placement.y, placement.width, placement.height);
+  const maskCtx = mask.getContext("2d");
+  // Opaque protects the existing photograph; transparent marks new margins.
+  maskCtx.fillStyle = "#ffffff";
+  maskCtx.fillRect(placement.x, placement.y, placement.width, placement.height);
+  return { image: source.toDataURL("image/png"), mask: mask.toDataURL("image/png"), aspect, imageKind };
+}
+
+function setExtendStatus(message, kind) {
+  const status = document.getElementById("ai-extend-status");
+  if (!status) return;
+  status.className = "status-text" + (kind ? ` ${kind}` : "");
+  status.textContent = message || "";
+}
+
+document.getElementById("ai-extend-btn")?.addEventListener("click", async () => {
+  if (!state.mainImage || state.imageEditBusy) return;
+  if (state.imageKind === "map") {
+    setExtendStatus("AI extension is disabled for maps and diagrams to avoid inventing factual content.", "error");
+    return;
+  }
+  const snapshot = imageEditSnapshot();
+  state.imageEditBusy = true;
+  syncImageActionButtons();
+  setExtendStatus("Extending the photo with GPT Image. Your current image stays visible until it is ready…");
+  try {
+    const response = await fetch("/api/extend-image", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(createImageExtensionInput(snapshot.image, snapshot.aspect, snapshot.imageKind)),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    if (!data.image) throw new Error("No extended image returned.");
+    const extended = await createImage(data.image);
+    // Preserve the generated composition. Face detection would recrop it.
+    extended.__focalPoint = { x: extended.width / 2, y: extended.height / 2 };
+    applyAIImageResult(extended, snapshot);
+    setExtendStatus("Photo extended. Review the AI-generated surroundings before publishing. You can undo this change.", "success");
+  } catch (error) {
+    setExtendStatus(`Extend failed: ${error.message}`, "error");
+  } finally {
+    state.imageEditBusy = false;
+    syncImageActionButtons();
+  }
+});
+
 function setEnhanceStatus(msg, kind) {
   if (!aiEnhanceStatus) return;
   aiEnhanceStatus.className = "status-text" + (kind ? ` ${kind}` : "");
@@ -3834,15 +3979,18 @@ function setEnhanceStatus(msg, kind) {
 if (aiEnhanceBtn) {
   aiEnhanceBtn.addEventListener("click", async () => {
     const img = state.mainImage;
-    if (!img) return;
+    if (!img || state.imageEditBusy) return;
+    const snapshot = imageEditSnapshot();
+    state.imageEditBusy = true;
+    syncImageActionButtons();
 
     aiEnhanceBtn.disabled = true;
     aiEnhanceBtn.classList.add("working");
     setEnhanceStatus("Enhancing directly with GPT Image (30–90s)…");
 
     try {
-      // Keep all source pixels for restoration. The selected Pix aspect is
-      // sent separately so the model can compose for the actual poster.
+      // Send the raw image in its own proportions, never the poster canvas
+      // or a cropped/padded composition. Poster framing stays entirely local.
       const rawW = img.naturalWidth || img.width;
       const rawH = img.naturalHeight || img.height;
       const scale = Math.min(1, 1536 / Math.max(rawW, rawH));
@@ -3858,7 +4006,7 @@ if (aiEnhanceBtn) {
         method: "POST",
         headers: {
           "Content-Type": "image/png",
-          "X-Poster-Aspect": state.aspectRatio,
+          "X-Image-Kind": snapshot.imageKind,
         },
         body: blob,
       });
@@ -3868,6 +4016,9 @@ if (aiEnhanceBtn) {
         throw new Error(data.code ? `${reason} (${data.code})` : reason);
       }
       if (!data.image) throw new Error("No image returned.");
+      if (data.framing !== "source-preserved") {
+        throw new Error("The server is still using the old reframing enhancement. Update/restart the server; your original image is unchanged.");
+      }
 
       // Swap the background for the enhanced version
       const enhanced = new Image();
@@ -3876,20 +4027,15 @@ if (aiEnhanceBtn) {
         enhanced.onerror = () => reject(new Error("Enhanced image failed to load."));
         enhanced.src = data.image;
       });
-      await ensureImageFocalPoint(enhanced);
-      state.mainImage = enhanced;
-      // Old offsets belong to the source image and produce a bad crop when
-      // applied to a newly framed output. Reset them so Pix centres the new
-      // face/subject focal point with its standard 10% cover headroom.
-      resetImageControls();
-      renderPoster();
+      applyAIImageResult(enhanced, snapshot, true);
       const engineLabel = data.engine || "GPT Image";
-      setEnhanceStatus(`✓ Enhanced via ${engineLabel} and reframed for ${data.aspect || state.aspectRatio}. Re-pick a stock image to undo.`, "success");
+      setEnhanceStatus(`✓ Enhanced via ${engineLabel}; your Pix crop is unchanged. Review for duplicated or altered details${snapshot.imageKind === "map" ? ", especially labels and geography" : ""}. Use Undo AI image change if needed.`, "success");
     } catch (err) {
       setEnhanceStatus(`Enhance failed: ${err.message}`, "error");
     } finally {
       aiEnhanceBtn.classList.remove("working");
-      aiEnhanceBtn.disabled = !state.mainImage;
+      state.imageEditBusy = false;
+      syncImageActionButtons();
     }
   });
 }

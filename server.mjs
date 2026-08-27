@@ -9,16 +9,15 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { spawn } from "node:child_process";
 import { TwitterApi } from "twitter-api-v2";
 import Busboy from "busboy";
+import { extendImageRequest } from "./lib/image-extension.js";
 import {
   suggestRegister, registerRules, assessTone, rectifyInstruction,
 } from "./lib/editorial-tone.js";
 import {
   GPT_IMAGE_ENHANCE_MODEL,
   GPT_IMAGE_ENHANCE_QUALITY,
-  imageEnhancePromptForAspect,
-  imageEnhanceSizeForAspect,
-  normalizePosterAspect,
 } from "./lib/ai-enhance.js";
+import { imageEnhanceForm } from "./lib/image-enhancement.js";
 
 const root = join(process.cwd(), "public");
 const port = Number(process.env.PORT || 3000);
@@ -253,6 +252,12 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && req.url === "/api/upscale-image") {
     await handleUpscaleImage(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/extend-image") {
+    const result = await extendImageRequest(req, openaiApiKey);
+    sendJson(res, result.status, result.body);
     return;
   }
 
@@ -2951,22 +2956,10 @@ async function handleUpscaleImage(req, res) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks);
-    if (buffer.length < 1000) {
-      sendJson(res, 400, { error: "Empty or invalid image body." });
-      return;
-    }
-    const mime = req.headers["content-type"]?.includes("jpeg") ? "image/jpeg" : "image/png";
-    const posterAspect = normalizePosterAspect((req.headers["x-poster-aspect"] || "").toString());
-    const outputSize = imageEnhanceSizeForAspect(posterAspect);
+    const { form, source, outputSize, imageKind } = imageEnhanceForm(buffer, req.headers["x-image-kind"]);
     const model = GPT_IMAGE_ENHANCE_MODEL;
 
     const t0 = Date.now();
-    const form = new FormData();
-    form.append("model", model);
-    form.append("prompt", imageEnhancePromptForAspect(posterAspect));
-    form.append("size", outputSize);
-    form.append("quality", GPT_IMAGE_ENHANCE_QUALITY);
-    form.append("image", new Blob([buffer], { type: mime }), mime === "image/jpeg" ? "input.jpg" : "input.png");
 
     const aiRes = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
@@ -2993,17 +2986,19 @@ async function handleUpscaleImage(req, res) {
       return;
     }
 
-    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${model}, aspect=${posterAspect}, size=${outputSize}, quality=${GPT_IMAGE_ENHANCE_QUALITY})`);
+    console.log(`✓ AI enhance done in ${Date.now() - t0}ms (${model}, source=${source.width}x${source.height}, size=${outputSize}, quality=${GPT_IMAGE_ENHANCE_QUALITY})`);
     sendJson(res, 200, {
       image: `data:image/png;base64,${b64}`,
       engine: model,
-      framing: "poster-aware",
-      aspect: posterAspect,
+      framing: "source-preserved",
+      sourceWidth: source.width,
+      sourceHeight: source.height,
+      imageKind,
       outputSize,
       detail: GPT_IMAGE_ENHANCE_QUALITY,
     });
   } catch (err) {
     console.error("✗ upscale-image error:", err);
-    sendJson(res, 500, { error: err.message || "Image enhance failed." });
+    sendJson(res, err.status || 500, { error: err.message || "Image enhance failed." });
   }
 }
